@@ -13,7 +13,6 @@ router.get('/google', passport.authenticate('google', { scope: ['profile', 'emai
 router.get('/google/callback', 
     passport.authenticate('google', { failureRedirect: 'http://localhost:5173/login' }),
     (req, res) => {
-        // Seedha dashboard redirect karo (session backend mein save ho chuka hai)
         res.redirect('http://localhost:5173/dashboard');
     }
 );

@@ -7,7 +7,6 @@ const Dashboard = () => {
   const [userData, setUserData] = useState(null);
 
   useEffect(() => {
-    // 1. URL query params se user data catch karne ke liye (agar Google login se aaya hai)
     const params = new URLSearchParams(location.search);
     const userParam = params.get("user");
 
@@ -16,18 +15,15 @@ const Dashboard = () => {
         const parsedUser = JSON.parse(decodeURIComponent(userParam));
         localStorage.setItem("Users", JSON.stringify(parsedUser));
         setUserData(parsedUser);
-        // URL se query params clean karne ke liye
         navigate("/dashboard", { replace: true });
       } catch (err) {
         console.error("Failed to parse user data", err);
       }
     } else {
-      // LocalStorage se user uthao
       const localUser = localStorage.getItem("Users");
       if (localUser) {
         setUserData(JSON.parse(localUser));
       } else {
-        // Agar login nahi hai toh login/signup par bhej do
         navigate("/login");
       }
     }
@@ -63,7 +59,6 @@ const Dashboard = () => {
           </p>
         </div>
 
-        {/* Lorem Ipsum Content / Components */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="rounded-xl border border-white/10 bg-slate-900/40 p-5">
             <h3 className="font-bold text-blue-400 mb-2">Active Local Requests</h3>

@@ -1,46 +1,39 @@
-const User = require("../model/User"); // User model ko database operations ke liye import kiya hai
-const nodemailer = require("nodemailer"); // Nodemailer ko email (OTP) bhejne ke liye import kiya hai
-const bcrypt = require("bcryptjs"); // Passwords ko secure hash karne aur compare karne ke liye import kiya hai
+const User = require("../model/User"); 
+const nodemailer = require("nodemailer");
+const bcrypt = require("bcryptjs"); 
 
-// Gmail SMTP server ke sath email transporter configure kar rahe hain
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 465,
     secure: true,
     auth: {
-        user: process.env.EMAIL_USER, // Sender email .env file se uthayi hai
-        pass: process.env.EMAIL_PASS, // App password .env file se uthaya hai
+        user: process.env.EMAIL_USER, 
+        pass: process.env.EMAIL_PASS,
     },
 });
 
-const otpStorage = {}; // Generated OTPs ko temporarily store karne ke liye object
-const signupTempStorage = {}; // Signup details ko OTP verify hone tak temporarily store karne ke liye object
+const otpStorage = {}; 
+const signupTempStorage = {}; 
 
-// 1. Email par 6 digit ka OTP bhejne ka function
 exports.sendOtp = async (req, res) => {
     try {
-        const { email, fullname, password } = req.body; // Request body se email, name aur password nikal rahe hain
+        const { email, fullname, password } = req.body; 
 
-        // Check kar rahe hain ki email valid hai ya nahi
         if (!email || !email.includes("@")) {
             return res.status(400).json({ success: false, message: "Please enter a valid email address!" });
         }
 
-        const normalizedEmail = email.toLowerCase().trim(); // Email ko clean aur lowercase kar rahe hain
-        const otp = Math.floor(100000 + Math.random() * 900000).toString(); // Ek random 6-digit OTP generate kar rahe hain
-
-        // OTP aur uska expiry time (5 minutes) storage mein save kar rahe hain
+        const normalizedEmail = email.toLowerCase().trim();
+        const otp = Math.floor(100000 + Math.random() * 900000).toString(); 
         otpStorage[normalizedEmail] = {
             code: otp,
             expiresAt: Date.now() + 5 * 60 * 1000,
         };
 
-        // Agar signup data sath mein aaya hai toh use temporary storage mein daal rahe hain
         if (fullname && password) {
             signupTempStorage[normalizedEmail] = { fullname, password };
         }
 
-        // Mobile aur Laptop dono screens par perfectly fit hone wala professional responsive HTML email template
         const mailOptions = {
             from: `"NeighbourHelp" <${process.env.EMAIL_USER}>`,
             to: normalizedEmail,
@@ -100,7 +93,6 @@ exports.sendOtp = async (req, res) => {
             `,
         };
 
-        // Nodemailer ke through user ki email par mail send kar rahe hain
         await transporter.sendMail(mailOptions);
 
         return res.status(200).json({
@@ -117,49 +109,42 @@ exports.sendOtp = async (req, res) => {
     }
 };
 
-// 2. User dwara dale gaye OTP ko verify karke naya account create ya update karne ka function
 exports.verifyOtp = async (req, res) => {
     try {
-        const { email, otp } = req.body; // Request se email aur user ka dala hua OTP nikal rahe hain
+        const { email, otp } = req.body; 
 
-        // Check kar rahe hain ki email aur otp dono provide kiye gaye hain ya nahi
         if (!email || !otp) {
             return res.status(400).json({ success: false, message: "Email and OTP are required!" });
         }
 
         const normalizedEmail = email.toLowerCase().trim();
-        const storedOtp = otpStorage[normalizedEmail]; // Storage se us email ka stored OTP nikal rahe hain
-
-        // Agar OTP generate hi nahi hua ya expire ho chuka hai
+        const storedOtp = otpStorage[normalizedEmail]; 
         if (!storedOtp) {
             return res.status(400).json({ success: false, message: "OTP not found or expired. Please request a new code!" });
         }
 
-        // Agar OTP ka 5 minute ka time nikal chuka hai
         if (Date.now() > storedOtp.expiresAt) {
             delete otpStorage[normalizedEmail];
             return res.status(400).json({ success: false, message: "OTP has expired. Please request a new code!" });
         }
 
-        // Agar user ne galat OTP dala hai
+      
         if (storedOtp.code !== otp) {
             return res.status(400).json({ success: false, message: "Incorrect verification code!" });
         }
 
-        // OTP match ho gaya, ab use storage se delete kar rahe hain taaki dobara use na ho sake
+        
         delete otpStorage[normalizedEmail];
 
-        // Check kar rahe hain ki database mein yeh user pehle se exist karta hai ya nahi
+       
         let user = await User.findOne({ email: normalizedEmail });
         const tempData = signupTempStorage[normalizedEmail] || {};
         let hashedPassword;
 
-        // Agar signup ke waqt password diya gaya tha, toh use bcrypt se secure hash kar rahe hain
         if (tempData.password) {
             hashedPassword = await bcrypt.hash(tempData.password, 10);
         }
 
-        // Agar user database mein bilkul naya hai, toh naya document create kar rahe hain
         if (!user) {
             user = await User.create({
                 email: normalizedEmail,
@@ -167,7 +152,7 @@ exports.verifyOtp = async (req, res) => {
                 password: hashedPassword || null,
             });
         } else {
-            // Agar user pehle se Google login ki wajah se tha aur password nahi tha, toh naya password add kar rahe hain
+            
             if (!user.password && hashedPassword) {
                 user.password = hashedPassword;
                 if (tempData.fullname && (!user.name || user.name === normalizedEmail.split("@")[0])) {
@@ -177,10 +162,8 @@ exports.verifyOtp = async (req, res) => {
             }
         }
 
-        // Temporary signup data ko memory se clear kar rahe hain
         delete signupTempStorage[normalizedEmail];
 
-        // Success response bhej rahe hain sath mein user data
         return res.status(200).json({
             success: true,
             message: "Email verified successfully!",
@@ -197,38 +180,28 @@ exports.verifyOtp = async (req, res) => {
     }
 };
 
-// 3. Normal Email aur Password se Login karne ka function
 exports.login = async (req, res) => {
     try {
-        const { email, password } = req.body; // Request body se email aur password nikal rahe hain
-
-        // Check kar rahe hain ki email aur password dono fields bhari hain ya nahi
+        const { email, password } = req.body; 
         if (!email || !password) {
             return res.status(400).json({ success: false, message: "Please provide email and password!" });
         }
 
         const normalizedEmail = email.toLowerCase().trim();
-        const user = await User.findOne({ email: normalizedEmail }); // Database mein email se user ko dhoond rahe hain
-
-        // Agar user database mein nahi mila
+        const user = await User.findOne({ email: normalizedEmail }); 
         if (!user) {
             return res.status(400).json({ success: false, message: "No account found with this email. Please sign up first!" });
         }
-
-        // Agar user ka password set nahi hai (matlab account sirf Google login se bana tha)
         if (!user.password) {
             return res.status(400).json({ success: false, message: "This account uses Google Login. Please continue with Google." });
         }
 
-        // User ke dale gaye password ko database ke hashed password ke sath compare kar rahe hain
         const isMatch = await bcrypt.compare(password, user.password);
 
-        // Agar password match nahi hua
         if (!isMatch) {
             return res.status(400).json({ success: false, message: "Incorrect password!" });
         }
 
-        // Sab kuch sahi hai, login successful ka response bhej rahe hain
         return res.status(200).json({
             success: true,
             message: "Login successful!",

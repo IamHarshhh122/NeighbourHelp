@@ -20,7 +20,6 @@ app.use(
     })
 );
 
-// SESSION CONFIGURATION
 app.use(
     session({
         secret: process.env.SESSION_SECRET || "neighbourhelp@7140",
@@ -33,12 +32,10 @@ app.use(
         },
     })
 );
-
-// PASSPORT INITIALIZATION
 app.use(passport.initialize());
 app.use(passport.session());
 
-// GOOGLE OAUTH STRATEGY
+// GOOGLE OAUTH 
 passport.use(
     new GoogleStrategy(
         {
@@ -93,7 +90,6 @@ passport.deserializeUser(async (id, done) => {
     }
 });
 
-// MONGODB CONNECTION
 mongoose
     .connect(process.env.MONGO_URI)
     .then(() => {
@@ -103,12 +99,7 @@ mongoose
         console.log("MongoDB Connection Error:", error.message);
     });
 
-// AUTH ROUTES
 app.use("/api", authRoutes);
-
-// ======================================================
-// TASK ROUTES (CORRECTED URL PATHS)
-// ======================================================
 
 // 1. POST: Create a new task
 app.post("/tasks", async (req, res) => {
@@ -166,7 +157,6 @@ app.put("/tasks/accept/:id", async (req, res) => {
     }
 });
 
-// TEST ROUTE
 app.get("/", (req, res) => {
     res.json({
         success: true,
@@ -174,7 +164,7 @@ app.get("/", (req, res) => {
     });
 });
 
-// SERVER LISTENING
+// Backend sign
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
