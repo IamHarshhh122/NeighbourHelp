@@ -1,3 +1,5 @@
+desktop.ini
+**/desktop.ini
 node_modules/
-backend/node_modules/
 .env
+dist/

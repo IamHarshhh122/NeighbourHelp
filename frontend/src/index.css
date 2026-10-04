@@ -1,3 +1,44 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+@keyframes spinClockwise {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  
+  @keyframes spinCounterClockwise {
+    from { transform: rotate(360deg); }
+    to { transform: rotate(0deg); }
+  }
+  
+  .animate-spin-slow {
+    animation: spinClockwise 45s linear infinite;
+  }
+  
+  .animate-spin-reverse {
+    animation: spinCounterClockwise 32s linear infinite;
+  }
+  @keyframes floatBobbing {
+    0%, 100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-14px);
+    }
+  }
+  
+  .float-house-1 {
+    animation: floatBobbing 5.5s ease-in-out infinite;
+  }
+  
+  .float-house-2 {
+    animation: floatBobbing 6.8s ease-in-out infinite 1.2s;
+  }
+  
+  .float-house-3 {
+    animation: floatBobbing 6.2s ease-in-out infinite 0.6s;
+  }
+  
+  .float-house-4 {
+    animation: floatBobbing 7.4s ease-in-out infinite 2s;
+  }

@@ -1,255 +1,1104 @@
-import React, { useState, useEffect } from 'react';
-import { HiPlus, HiLocationMarker, HiCheckCircle, HiClock, HiUser } from 'react-icons/hi';
-import { toast } from 'react-hot-toast';
-import Navbar from './Navbar';
-import Footer from './Footer';
+import React, { useEffect, useRef, useState } from "react";
+import {HiPlus,HiLocationMarker,HiClock,HiUser,HiTrash,HiMap,HiRefresh,HiX,HiPlay,HiArrowNarrowUp,
+HiArrowNarrowLeft,HiArrowNarrowRight,HiFlag,HiCamera,HiCheckCircle,HiExclamationCircle,
+} from "react-icons/hi";
+import { toast } from "react-hot-toast";
+import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+import "leaflet-routing-machine";
+import colonyImg from "../assets/neighbourhood-colony.png";
 
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
+  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+});
+
+const API = "http://localhost:5000/api";
+
+/* REWARD CALCULATION*/
+const CATEGORY_BONUS = {
+  "General Help": 0,
+  "Parcel Receiving": 5,
+  "Quick Fix": 15,
+  "Bank Errands": 10,
+  "Grocery Pickup": 8,
+  Tutoring: 25,
+};
+
+function calculateReward(distanceKm, category) {
+  const base = 10;
+  let distanceBonus = 5;
+  if (distanceKm != null) {
+    if (distanceKm <= 0.5) distanceBonus = 5;
+    else if (distanceKm <= 1) distanceBonus = 10;
+    else if (distanceKm <= 2) distanceBonus = 20;
+    else if (distanceKm <= 5) distanceBonus = 35;
+    else distanceBonus = 50;
+  }
+  const categoryBonus = CATEGORY_BONUS[category] ?? 0;
+  return base + distanceBonus + categoryBonus;
+}
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return parseFloat((R * c).toFixed(1));
+}
+
+function distanceMeters(a, b) {
+  if (!a || !b) return Infinity;
+  const R = 6371000;
+  const dLat = (b.lat - a.lat) * (Math.PI / 180);
+  const dLng = (b.lng - a.lng) * (Math.PI / 180);
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(a.lat * (Math.PI / 180)) *
+      Math.cos(b.lat * (Math.PI / 180)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function getManeuverIcon(instruction) {
+  const mod = (instruction?.modifier || "").toLowerCase();
+  const type = (instruction?.type || "").toLowerCase();
+  if (type === "arrive" || type === "destinationreached") {
+    return { Icon: HiFlag, label: "Arrive" };
+  }
+  if (mod.includes("left")) return { Icon: HiArrowNarrowLeft, label: "Turn Left" };
+  if (mod.includes("right")) return { Icon: HiArrowNarrowRight, label: "Turn Right" };
+  return { Icon: HiArrowNarrowUp, label: "Continue Straight" };
+}
+
+/* ─────────── ROUTING MACHINE ─────────── */
+function RoutingMachine({ userLoc, taskLoc, onRouteFound, onRouteData, onRouteError, retryKey }) {
+  const map = useMap();
+  const routingControlRef = React.useRef(null);
+
+  useEffect(() => {
+    if (!map || !userLoc || !taskLoc) return;
+    let isMounted = true;
+    let timeoutId;
+
+    if (onRouteError) onRouteError(false);
+
+    try {
+      const routingControl = L.Routing.control({
+        waypoints: [L.latLng(userLoc.lat, userLoc.lng), L.latLng(taskLoc.lat, taskLoc.lng)],
+        routeWhileDragging: false,
+        showAlternatives: false,
+        fitSelectedRoutes: true,
+        show: false,
+        addWaypoints: false,
+        lineOptions: { styles: [{ color: "#10b981", weight: 5, opacity: 0.9 }] },
+        createMarker: function (i, waypoint) {
+          return L.marker(waypoint.latLng, {
+            title: i === 0 ? "Start Location" : "Task Location",
+          });
+        },
+      });
+
+      timeoutId = setTimeout(() => {
+        if (isMounted) {
+          console.warn("Routing timed out manually after 12s");
+          if (onRouteFound) onRouteFound(null);
+          if (onRouteData) onRouteData(null);
+          if (onRouteError) onRouteError(true);
+        }
+      }, 12000);
+
+      routingControl.on("routesfound", (e) => {
+        clearTimeout(timeoutId);
+        if (!isMounted || !map) return;
+        const route = e.routes?.[0];
+        if (!route) return;
+        if (onRouteFound) {
+          onRouteFound({
+            distanceKm: (route.summary.totalDistance / 1000).toFixed(1),
+            timeMin: Math.round(route.summary.totalTime / 60),
+          });
+        }
+        if (onRouteData) {
+          const coordinates = (route.coordinates || []).map((c) => ({ lat: c.lat, lng: c.lng }));
+          const instructions = (route.instructions || []).map((ins) => ({
+            text: ins.text,
+            type: ins.type,
+            modifier: ins.modifier,
+            index: ins.index,
+          }));
+          onRouteData({ coordinates, instructions });
+        }
+        if (onRouteError) onRouteError(false);
+      });
+
+      routingControl.on("routingerror", (err) => {
+        clearTimeout(timeoutId);
+        if (!isMounted) return;
+        console.warn("OSRM routing failed:", err);
+        if (onRouteFound) onRouteFound(null);
+        if (onRouteData) onRouteData(null);
+        if (onRouteError) onRouteError(true);
+      });
+
+      routingControl.addTo(map);
+      routingControlRef.current = routingControl;
+    } catch (err) {
+      console.warn("Routing initialization skipped:", err);
+      if (onRouteError) onRouteError(true);
+    }
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+      if (routingControlRef.current && map) {
+        try {
+          if (map._loaded && typeof map.removeControl === "function") {
+            map.removeControl(routingControlRef.current);
+          }
+        } catch (e) {}
+        routingControlRef.current = null;
+      }
+    };
+  }, [map, userLoc?.lat, userLoc?.lng, taskLoc?.lat, taskLoc?.lng, retryKey]);
+
+  return null;
+}
+
+function FollowUser({ position, active }) {
+  const map = useMap();
+  useEffect(() => {
+    if (active && position) {
+      map.panTo([position.lat, position.lng], { animate: true });
+    }
+  }, [map, position, active]);
+  return null;
+}
+
+function BackgroundLayer() {
+  const ballRef = useRef(null);
+
+  useEffect(() => {
+    const el = ballRef.current;
+    if (!el) return;
+
+    const size = window.innerWidth < 640 ? 320 : 380;
+    el.style.width = `${size}px`;
+    el.style.height = `${size}px`;
+
+    let x = Math.random() * Math.max(window.innerWidth - size, 1);
+    let y = Math.random() * Math.max(window.innerHeight - size, 1);
+    let vx = 2.2;
+    let vy = 1.7;
+    let rot = 0;
+    let last = performance.now();
+    let raf;
+
+    const tick = (now) => {
+      const dt = Math.min((now - last) / 16.67, 3);
+      last = now;
+
+      const maxX = window.innerWidth - size;
+      const maxY = window.innerHeight - size;
+
+      x += vx * dt;
+      y += vy * dt;
+
+      if (x <= 0) {
+        x = 0;
+        vx = Math.abs(vx);
+      } else if (x >= maxX) {
+        x = Math.max(maxX, 0);
+        vx = -Math.abs(vx);
+      }
+      if (y <= 0) {
+        y = 0;
+        vy = Math.abs(vy);
+      } else if (y >= maxY) {
+        y = Math.max(maxY, 0);
+        vy = -Math.abs(vy);
+      }
+
+      rot += (vx > 0 ? 1 : -1) * 0.9 * dt;
+
+      el.style.transform = `translate3d(${x}px, ${y}px, 0) rotate(${rot}deg)`;
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <div className="pointer-events-none fixed inset-0 overflow-hidden select-none z-0">
+      <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[60%] h-[45%] bg-emerald-600/[0.07] rounded-full blur-[550px]" />
+      <div className="absolute bottom-[-15%] right-[-10%] w-[40%] h-[40%] bg-emerald-800/[0.07] rounded-full blur-[550px]" />
+
+      <div
+        ref={ballRef}
+        className="absolute top-0 left-0 rounded-full overflow-hidden border border-emerald-400/30 bg-[#0d1218]"
+        style={{
+          opacity: 0.6,
+          willChange: "transform",
+          boxShadow:
+            "0 0 50px rgba(34,197,94,0.22), inset 0 0 30px rgba(34,197,94,0.12)",
+        }}
+      >
+        <img
+          src={colonyImg}
+          alt=""
+          draggable={false}
+          className="w-full h-full object-cover"
+          style={{ filter: "saturate(0.9) brightness(1.05)" }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* Helper */
+function CompletionModal({ task, onClose, onSubmit, submitting }) {
+  const [photo, setPhoto] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [notes, setNotes] = useState("");
+  const fileRef = useRef(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Photo must be under 5MB");
+      return;
+    }
+    setPhoto(file);
+    const reader = new FileReader();
+    reader.onloadend = () => setPhotoPreview(reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = () => {
+    if (!photo) {
+      toast.error("Please upload a photo as proof");
+      return;
+    }
+    onSubmit({ photo, photoPreview, notes });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-[#0d1218] border border-white/[0.08] rounded-3xl w-full max-w-md shadow-2xl max-h-[92vh] overflow-y-auto">
+        <div className="flex items-start justify-between px-6 pt-6">
+          <div>
+            <h2 className="text-xl font-bold text-white">Submit Work Proof</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              A photo is required for verification
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-9 h-9 rounded-xl hover:bg-white/[0.06] flex items-center justify-center text-slate-500 hover:text-slate-200 transition"
+          >
+            <HiX className="text-lg" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+              Photo Proof <span className="text-emerald-400">*</span>
+            </label>
+
+            {photoPreview ? (
+              <div className="relative rounded-2xl overflow-hidden border border-white/[0.08]">
+                <img src={photoPreview} alt="proof" className="w-full h-52 object-cover" />
+                <button
+                  onClick={() => {
+                    setPhoto(null);
+                    setPhotoPreview(null);
+                    if (fileRef.current) fileRef.current.value = "";
+                  }}
+                  className="absolute top-2 right-2 w-8 h-8 rounded-lg bg-black/70 backdrop-blur-md flex items-center justify-center text-white hover:bg-red-500/80 transition"
+                >
+                  <HiX className="text-sm" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="w-full h-40 rounded-2xl border-2 border-dashed border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.04] hover:border-emerald-500/30 flex flex-col items-center justify-center gap-2 transition"
+              >
+                <HiCamera className="text-3xl text-slate-500" />
+                <span className="text-xs font-medium text-slate-400">
+                  Tap to upload photo
+                </span>
+                <span className="text-[10px] text-slate-600">JPG, PNG · Max 5MB</span>
+              </button>
+            )}
+
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFile}
+              className="hidden"
+            />
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+              Notes (optional)
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Any details to share with the poster..."
+              rows={3}
+              className="w-full p-4 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-slate-100 placeholder:text-slate-500 outline-none resize-none focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/10 transition"
+            />
+          </div>
+
+          <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-blue-500/[0.06] border border-blue-500/20">
+            <HiExclamationCircle className="text-blue-400 text-sm shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-200/90 leading-relaxed">
+              The poster will have 24 hours to confirm. If they don't respond,
+              it will be auto-confirmed and credits will be added to your account.
+            </p>
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 h-11 rounded-xl border border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.06] text-sm font-medium text-slate-300 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting || !photo}
+              className="flex-[1.4] h-11 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-sm font-bold text-[#04140a] transition shadow-lg shadow-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Submitting..." : `Submit · +${task.reward || 0} credits`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/*  DISPUTE MODAL (Poster) */
+function DisputeModal({ task, onClose, onSubmit, submitting }) {
+  const [reason, setReason] = useState("work_not_done");
+  const [customReason, setCustomReason] = useState("");
+
+  const reasons = [
+    { key: "work_not_done", label: "Work was not done" },
+    { key: "incomplete", label: "Work was incomplete" },
+    { key: "wrong_item", label: "Wrong item or result" },
+    { key: "damaged", label: "Something was damaged" },
+    { key: "other", label: "Other reason" },
+  ];
+
+  const handleSubmit = () => {
+    if (reason === "other" && !customReason.trim()) {
+      toast.error("Please describe the issue");
+      return;
+    }
+    onSubmit({ reason, customReason });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-[#0d1218] border border-white/[0.08] rounded-3xl w-full max-w-md shadow-2xl max-h-[92vh] overflow-y-auto">
+        <div className="flex items-start justify-between px-6 pt-6">
+          <div>
+            <h2 className="text-xl font-bold text-white">Raise a Dispute</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Tell us why the work wasn't completed properly
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-9 h-9 rounded-xl hover:bg-white/[0.06] flex items-center justify-center text-slate-500 hover:text-slate-200 transition"
+          >
+            <HiX className="text-lg" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div className="space-y-2">
+            {reasons.map((r) => (
+              <label
+                key={r.key}
+                className={`flex items-center gap-3 p-3.5 rounded-xl border cursor-pointer transition ${
+                  reason === r.key
+                    ? "border-emerald-500/40 bg-emerald-500/[0.06]"
+                    : "border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.04]"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="dispute-reason"
+                  value={r.key}
+                  checked={reason === r.key}
+                  onChange={() => setReason(r.key)}
+                  className="w-4 h-4 accent-emerald-500 shrink-0"
+                />
+                <span className="text-sm text-slate-200">{r.label}</span>
+              </label>
+            ))}
+          </div>
+
+          {reason === "other" && (
+            <textarea
+              value={customReason}
+              onChange={(e) => setCustomReason(e.target.value)}
+              placeholder="Describe the issue..."
+              rows={3}
+              className="w-full p-4 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-slate-100 placeholder:text-slate-500 outline-none resize-none focus:border-emerald-500/60 transition"
+            />
+          )}
+
+          <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+            <HiExclamationCircle className="text-amber-400 text-sm shrink-0 mt-0.5" />
+            <p className="text-[11px] text-amber-200/90 leading-relaxed">
+              False disputes affect your trust score. Only raise if there's a genuine issue.
+            </p>
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 h-11 rounded-xl border border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.06] text-sm font-medium text-slate-300 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="flex-[1.4] h-11 rounded-xl bg-red-500/90 hover:bg-red-500 text-sm font-bold text-white transition disabled:opacity-40"
+            >
+              {submitting ? "Submitting..." : "Raise Dispute"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/*MAIN COMPONENT */
 export default function Microtask() {
   const [tasks, setTasks] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('General Help');
-  const [address, setAddress] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [location, setLocation] = useState(null);
+  const [locationLoading, setLocationLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("available");
 
-  // Fetch tasks from backend MongoDB on component mount
+  const [selectedTaskMap, setSelectedTaskMap] = useState(null);
+  const [routeSource, setRouteSource] = useState("home");
+  const [routeSummary, setRouteSummary] = useState(null);
+  const [routeData, setRouteData] = useState(null);
+  const [routeError, setRouteError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  const [navigating, setNavigating] = useState(false);
+  const [liveNavPos, setLiveNavPos] = useState(null);
+  const [currentStepIdx, setCurrentStepIdx] = useState(0);
+  const watchIdRef = React.useRef(null);
+
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("General Help");
+  const [address, setAddress] = useState("");
+  const [taskLocation, setTaskLocation] = useState(null);
+  const [geocoding, setGeocoding] = useState(false);
+
+  const [completionTask, setCompletionTask] = useState(null);
+  const [submittingCompletion, setSubmittingCompletion] = useState(false);
+  const [disputeTask, setDisputeTask] = useState(null);
+  const [submittingDispute, setSubmittingDispute] = useState(false);
+
+  const getUser = () => {
+    try {
+      return JSON.parse(localStorage.getItem("Users") || "{}");
+    } catch {
+      return {};
+    }
+  };
+
+  const user = getUser();
+  const userId = user._id || user.id;
+
+  const helperHomeLoc =
+    user.homeLat != null && user.homeLng != null
+      ? { lat: Number(user.homeLat), lng: Number(user.homeLng) }
+      : null;
+
+  const getLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("GPS is not supported by your browser");
+      setLocationLoading(false);
+      return;
+    }
+    setLocationLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setLocation({ lat: latitude, lng: longitude });
+        setLocationLoading(false);
+        fetchTasks(latitude, longitude);
+      },
+      (error) => {
+        console.error("GPS Error:", error);
+        setLocationLoading(false);
+        toast.error("Location permission denied");
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  const fetchTasks = async (lat, lng) => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${API}/tasks/nearby?lat=${lat}&lng=${lng}&radiusInKm=50`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "Failed to load tasks");
+      setTasks(data.tasks || []);
+    } catch (error) {
+      console.error("Fetch Tasks:", error);
+      toast.error("Failed to load nearby tasks");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startNavigation = () => {
+    if (!navigator.geolocation) return toast.error("GPS is not supported");
+    if (!routeData || !routeData.instructions?.length) {
+      return toast.error("Please wait for the route to load");
+    }
+    setCurrentStepIdx(0);
+    setNavigating(true);
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        setLiveNavPos({ lat: position.coords.latitude, lng: position.coords.longitude });
+      },
+      (error) => {
+        console.error("Navigation GPS Error:", error);
+        toast.error("Live tracking error");
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
+    toast.success("Navigation started");
+  };
+
+  const stopNavigation = () => {
+    if (watchIdRef.current != null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    setNavigating(false);
+    setLiveNavPos(null);
+    setCurrentStepIdx(0);
+  };
+
   useEffect(() => {
-    fetchTasks();
+    if (!navigating || !liveNavPos || !routeData) return;
+    const steps = routeData.instructions;
+    if (!steps || currentStepIdx >= steps.length) return;
+    const step = steps[currentStepIdx];
+    const stepCoord = routeData.coordinates[step.index];
+    if (!stepCoord) return;
+    const dist = distanceMeters(liveNavPos, stepCoord);
+    if (dist < 25 && currentStepIdx < steps.length - 1) {
+      setCurrentStepIdx((idx) => idx + 1);
+    }
+    if (dist < 15 && currentStepIdx === steps.length - 1) {
+      toast.success("You have arrived");
+      stopNavigation();
+    }
+  }, [liveNavPos, navigating, routeData, currentStepIdx]);
+
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
   }, []);
 
-  const fetchTasks = async () => {
+  useEffect(() => {
+    getLocation();
+  }, []);
+
+  const handleAddressSearch = async (addr) => {
+    if (!addr.trim()) return null;
     try {
-      const response = await fetch("http://localhost:5000/api/tasks/nearby?lat=28.6139&lng=77.2090&radiusInKm=10");
-      const data = await response.json();
-      if (data.success) {
-        setTasks(data.tasks);
+      setGeocoding(true);
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          addr
+        )}&countrycodes=in&limit=1`
+      );
+      const data = await res.json();
+      if (data && data.length > 0) {
+        const { lat, lon } = data[0];
+        const newCoords = { lat: parseFloat(lat), lng: parseFloat(lon) };
+        setTaskLocation(newCoords);
+        toast.success("Location pinpointed");
+        return newCoords;
       } else {
-        toast.error(data.message || "Failed to load tasks");
+        toast.error("Could not find address");
+        return null;
       }
     } catch (err) {
-      console.error("Error fetching tasks:", err);
-      toast.error("Failed to load tasks from server");
+      console.error("Geocoding error:", err);
+      return null;
+    } finally {
+      setGeocoding(false);
     }
   };
 
   const handlePostTask = async (e) => {
     e.preventDefault();
+    if (!userId) return toast.error("Please login first");
     if (!title.trim() || !description.trim() || !address.trim()) {
-      toast.error("All fields are required!");
-      return;
+      return toast.error("All fields are required");
     }
+    let finalLoc = taskLocation;
+    if (!finalLoc || address.trim()) {
+      finalLoc = await handleAddressSearch(address.trim());
+    }
+    if (!finalLoc) return toast.error("Please enter a valid address");
+
+    const distanceForReward = location
+      ? calculateDistance(location.lat, location.lng, finalLoc.lat, finalLoc.lng)
+      : null;
+    const reward = calculateReward(distanceForReward, category);
 
     try {
-      // Check both 'Users' and 'User' in localStorage
-      const storedUser = JSON.parse(localStorage.getItem("Users") || localStorage.getItem("User") || "{}");
-      const posterId = storedUser._id || storedUser.id;
-
-      if (!posterId) {
-        toast.error("Please login first to post a task!");
-        return;
-      }
-
-      const response = await fetch("http://localhost:5000/api/tasks", {
+      const response = await fetch(`${API}/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title,
-          description,
+          title: title.trim(),
+          description: description.trim(),
           category,
-          location: { address, lat: 28.6139, lng: 77.2090 },
-          poster: posterId
-        })
+          location: {
+            address: address.trim(),
+            lat: finalLoc.lat,
+            lng: finalLoc.lng,
+          },
+          poster: userId,
+          reward,
+        }),
       });
-
       const data = await response.json();
-      if (data.success) {
-        setTasks([data.task, ...tasks]);
-        setTitle('');
-        setDescription('');
-        setAddress('');
-        setShowModal(false);
-        toast.success("Task published successfully! 🚀");
-      } else {
-        toast.error(data.message || "Failed to post task");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Server connection error!");
+      if (!response.ok || !data.success) throw new Error(data.message || "Failed");
+
+      setTasks((prev) => [data.task, ...prev]);
+      setTitle("");
+      setDescription("");
+      setAddress("");
+      setTaskLocation(null);
+      setCategory("General Help");
+      setShowModal(false);
+      setActiveTab("posted");
+      toast.success("Task published");
+    } catch (error) {
+      console.error("Post Task:", error);
+      toast.error(error.message || "Server error");
     }
   };
 
-  const handleAcceptTask = async (taskId) => {
+  const handleAcceptTask = async (task) => {
+    if (!userId) return toast.error("Please login first");
+    if (String(task.poster?._id) === String(userId)) {
+      return toast.error("You cannot accept your own task");
+    }
     try {
-      const storedUser = JSON.parse(localStorage.getItem("Users") || "{}");
-      const response = await fetch(`http://localhost:5000/api/tasks/accept/${taskId}`, {
+      const response = await fetch(`${API}/tasks/accept/${task._id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ helperId: storedUser._id || storedUser.id })
+        body: JSON.stringify({ helperId: userId }),
       });
-
       const data = await response.json();
-      if (data.success) {
-        setTasks(tasks.map(t => t._id === taskId ? data.task : t));
-        toast.success("Task accepted successfully! Helper mode active 🤝");
-      } else {
-        toast.error(data.message);
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Server connection error!");
+      if (!response.ok || !data.success) throw new Error(data.message || "Failed");
+      setTasks((prev) => prev.map((t) => (t._id === task._id ? data.task : t)));
+      toast.success("Task accepted");
+    } catch (error) {
+      console.error("Accept Task:", error);
+      toast.error(error.message || "Server error");
     }
   };
 
+  const handleSubmitCompletion = async ({ photo, photoPreview, notes }) => {
+    if (!completionTask) return;
+    try {
+      setSubmittingCompletion(true);
+      const gps = liveNavPos || location || null;
+      const gpsString = gps ? `${gps.lat.toFixed(6)},${gps.lng.toFixed(6)}` : null;
+
+      const response = await fetch(`${API}/tasks/complete/${completionTask._id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          helperId: userId,
+          photo: photoPreview,
+          notes: notes.trim(),
+          gps: gpsString,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Failed");
+
+      setTasks((prev) => prev.map((t) => (t._id === completionTask._id ? data.task : t)));
+      setCompletionTask(null);
+
+      try {
+        const u = JSON.parse(localStorage.getItem("Users") || "{}");
+        u.points = (u.points ?? 20) + (completionTask.reward || 0);
+        localStorage.setItem("Users", JSON.stringify(u));
+        window.dispatchEvent(new Event("profileUpdated"));
+      } catch {}
+
+      toast.success(`+${completionTask.reward || 0} credits added`);
+    } catch (error) {
+      console.error("Complete Task:", error);
+      toast.error(error.message || "Server error");
+    } finally {
+      setSubmittingCompletion(false);
+    }
+  };
+
+  const handleSubmitDispute = async ({ reason, customReason }) => {
+    if (!disputeTask) return;
+    try {
+      setSubmittingDispute(true);
+      const response = await fetch(`${API}/tasks/dispute/${disputeTask._id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          posterId: userId,
+          reason,
+          customReason: customReason.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Failed");
+      setTasks((prev) => prev.map((t) => (t._id === disputeTask._id ? data.task : t)));
+      setDisputeTask(null);
+      toast.success("Dispute raised. Our team will review within 48 hours.");
+    } catch (error) {
+      console.error("Dispute:", error);
+      toast.error(error.message || "Server error");
+    } finally {
+      setSubmittingDispute(false);
+    }
+  };
+
+  const handleConfirmTask = async (task) => {
+    if (!userId) return toast.error("Please login first");
+    try {
+      const response = await fetch(`${API}/tasks/confirm/${task._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ posterId: userId }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Failed");
+      setTasks((prev) => prev.map((t) => (t._id === task._id ? data.task : t)));
+      toast.success("Task confirmed");
+    } catch (error) {
+      console.error("Confirm Task:", error);
+      toast.error(error.message || "Server error");
+    }
+  };
+
+  const handleDeleteTask = async (taskId) => {
+    if (!window.confirm("Delete this task?")) return;
+    try {
+      const response = await fetch(`${API}/tasks/${taskId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "Failed");
+      setTasks((prev) => prev.filter((task) => task._id !== taskId));
+      toast.success("Task deleted");
+    } catch (error) {
+      console.error("Delete Task:", error);
+      toast.error(error.message || "Server error");
+    }
+  };
+
+  const openMapModal = (task) => {
+    const lat = Number(task.location?.lat);
+    const lng = Number(task.location?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return toast.error("Task GPS unavailable");
+    }
+    setRouteSource("home");
+    setRouteSummary(null);
+    setRouteData(null);
+    setRouteError(false);
+    setRetryKey(0);
+    stopNavigation();
+    setSelectedTaskMap(task);
+  };
+
+  const myPostedTasks = tasks.filter((task) => String(task.poster?._id) === String(userId));
+  const acceptedTasks = tasks.filter((task) => String(task.helper?._id) === String(userId));
+  const availableTasks = tasks.filter(
+    (task) => task.status === "Open" && String(task.poster?._id) !== String(userId)
+  );
+
+  const tabs = [
+    {
+      key: "available",
+      label: "Nearby",
+      count: availableTasks.length,
+      list: availableTasks,
+      empty: "No open tasks nearby right now.",
+    },
+    {
+      key: "posted",
+      label: "My posts",
+      count: myPostedTasks.length,
+      list: myPostedTasks,
+      empty: "You haven't posted any tasks yet.",
+    },
+    {
+      key: "accepted",
+      label: "Helping",
+      count: acceptedTasks.length,
+      list: acceptedTasks,
+      empty: "You haven't accepted any tasks yet.",
+    },
+  ];
+  const current = tabs.find((t) => t.key === activeTab);
+
+  const inputCls =
+    "w-full h-11 px-4 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/10 transition";
+
   return (
-    <div className="min-h-screen bg-[#020617] text-white flex flex-col justify-between relative overflow-hidden">
-      
-      {/* BACKGROUND GLOWS */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 -left-40 w-96 h-96 bg-blue-600/10 rounded-full blur-[100px]" />
-        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-cyan-500/10 rounded-full blur-[100px]" />
-      </div>
+    <div className="min-h-screen bg-[#090d12] text-slate-100 flex flex-col relative">
+      <BackgroundLayer />
 
-      <Navbar />
+      <main className="w-full max-w-4xl mx-auto px-5 sm:px-6 pt-12 pb-20 relative z-10 flex-1">
+        <header className="text-center mb-10">
+          <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-emerald-400 mb-4">
+            Help around you
+          </p>
+          <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-white leading-[1.05]">
+            Tasks near you,
+            <br />
+            <span className="text-emerald-400">neighbours need.</span>
+          </h1>
+          <p className="text-sm sm:text-base text-slate-400 mt-5 max-w-md mx-auto leading-relaxed">
+            Someone nearby needs a quick hand. Small task, big difference.
+          </p>
 
-      <main className="w-full max-w-5xl mx-auto px-4 py-10 relative z-10 my-auto">
-        
-        {/* HEADER & POST BUTTON */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-black">Nearby Micro-Tasks</h1>
-            <p className="text-xs text-slate-400 mt-1">Help neighbors within your 1-2 km radius or post your own task.</p>
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={() => {
+                setTaskLocation(null);
+                setShowModal(true);
+              }}
+              className="h-11 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#04140a] text-sm font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
+            >
+              <HiPlus className="text-base" />
+              Post a task
+            </button>
+            <button
+              onClick={getLocation}
+              className="h-11 px-5 rounded-xl border border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.06] text-slate-200 text-sm font-medium flex items-center gap-2 transition"
+            >
+              <HiRefresh className={`text-base ${locationLoading ? "animate-spin" : ""}`} />
+              {locationLoading ? "Locating" : "Refresh"}
+            </button>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="px-5 h-11 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-lg shadow-blue-600/20 text-white"
-          >
-            <HiPlus className="text-base" /> Post a Task
-          </button>
-        </div>
 
-        {/* TASK LIST GRID */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {tasks.length === 0 ? (
-            <p className="text-xs text-slate-400 col-span-2 text-center py-10">No active tasks found nearby.</p>
-          ) : (
-            tasks.map((task) => (
-              <div key={task._id} className="rounded-2xl border border-white/10 bg-slate-900/40 backdrop-blur-xl p-5 flex flex-col justify-between shadow-xl">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[10px] font-bold uppercase tracking-wider">
-                      {task.category}
-                    </span>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg ${task.status === 'Open' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}`}>
-                      {task.status}
-                    </span>
-                  </div>
-
-                  <h3 className="text-base font-bold text-white mb-1.5">{task.title}</h3>
-                  <p className="text-xs text-slate-400 mb-4 line-clamp-2">{task.description}</p>
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-4">
-                    <HiLocationMarker className="text-blue-400 text-sm shrink-0" />
-                    <span className="truncate">{task.location?.address}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-300">
-                        <HiUser className="text-xs" />
-                      </div>
-                      <span className="text-xs font-semibold text-slate-300">{task.poster?.name || "Neighbour User"}</span>
-                    </div>
-
-                    {task.status === 'Open' ? (
-                      <button
-                        onClick={() => handleAcceptTask(task._id)}
-                        className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-bold transition text-white shadow-md shadow-cyan-600/20"
-                      >
-                        Accept Task
-                      </button>
-                    ) : (
-                      <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
-                        <HiClock /> In Progress
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
+          {location && (
+            <p className="mt-5 inline-flex items-center gap-2 text-[11px] text-slate-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Location on · {location.lat.toFixed(3)}, {location.lng.toFixed(3)}
+            </p>
           )}
+        </header>
+
+        <div className="flex justify-center mb-8">
+          <div className="inline-flex p-1 rounded-2xl bg-white/[0.03] border border-white/[0.07]">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={`px-4 sm:px-5 h-10 rounded-xl text-sm font-semibold flex items-center gap-2 transition ${
+                  activeTab === t.key
+                    ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                    : "text-slate-400 hover:text-slate-200 border border-transparent"
+                }`}
+              >
+                {t.label}
+                <span
+                  className={`text-[11px] px-1.5 rounded-md ${
+                    activeTab === t.key ? "bg-emerald-500/20" : "bg-white/[0.05]"
+                  }`}
+                >
+                  {t.count}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
 
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-24 gap-4">
+            <div className="w-9 h-9 border-2 border-white/10 border-t-emerald-500 rounded-full animate-spin" />
+            <p className="text-sm text-slate-500">Finding nearby tasks...</p>
+          </div>
+        ) : current.list.length === 0 ? (
+          <EmptyState text={current.empty} />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {current.list.map((task) => {
+              const distance = calculateDistance(
+                location?.lat,
+                location?.lng,
+                task.location?.lat,
+                task.location?.lng
+              );
+              return (
+                <TaskCard
+                  key={task._id}
+                  task={task}
+                  distance={activeTab === "posted" ? null : distance}
+                  own={activeTab === "posted"}
+                  accepted={activeTab === "accepted"}
+                  onAccept={() => handleAcceptTask(task)}
+                  onDelete={() => handleDeleteTask(task._id)}
+                  onMap={() => openMapModal(task)}
+                  onMarkDone={() => setCompletionTask(task)}
+                  onDispute={() => setDisputeTask(task)}
+                  onConfirm={() => handleConfirmTask(task)}
+                />
+              );
+            })}
+          </div>
+        )}
       </main>
 
-      {/* POST TASK MODAL */}
+      {/* Post Task Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-white/10 rounded-3xl w-full max-w-lg p-6 sm:p-8 shadow-2xl relative">
-            <h2 className="text-xl font-black mb-4">Post a New Task</h2>
-            <form onSubmit={handlePostTask} className="flex flex-col gap-4">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0d1218] border border-white/[0.08] rounded-3xl w-full max-w-md shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between px-6 pt-6">
               <div>
-                <label className="text-xs font-bold text-slate-300 mb-1 block">Task Title</label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g., Need help carrying grocery bags"
-                  className="w-full h-11 px-4 rounded-xl bg-slate-950 border border-white/10 text-sm outline-none focus:border-blue-500 text-white"
-                />
+                <h2 className="text-xl font-bold text-white">Post a task</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Ask your neighbour for help — completely free
+                </p>
               </div>
+              <button
+                onClick={() => setShowModal(false)}
+                className="w-9 h-9 rounded-xl hover:bg-white/[0.06] flex items-center justify-center text-slate-500 hover:text-slate-200 transition"
+              >
+                <HiX className="text-lg" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePostTask} className="p-6 space-y-3">
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="What's the task? (e.g., Pick up a parcel)"
+                className={inputCls}
+              />
+
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className={inputCls}
+              >
+                <option className="bg-slate-900">General Help</option>
+                <option className="bg-slate-900">Parcel Receiving</option>
+                <option className="bg-slate-900">Quick Fix</option>
+                <option className="bg-slate-900">Bank Errands</option>
+                <option className="bg-slate-900">Grocery Pickup</option>
+                <option className="bg-slate-900">Tutoring</option>
+              </select>
+
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Add some details..."
+                rows={3}
+                className="w-full p-4 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-slate-100 placeholder:text-slate-500 outline-none resize-none focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/10 transition"
+              />
 
               <div>
-                <label className="text-xs font-bold text-slate-300 mb-1 block">Category</label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full h-11 px-4 rounded-xl bg-slate-950 border border-white/10 text-sm outline-none focus:border-blue-500 text-white"
-                >
-                  <option value="General Help">General Help</option>
-                  <option value="Parcel Receiving">Parcel Receiving</option>
-                  <option value="Quick Fix">Quick Fix</option>
-                  <option value="Bank Errands">Bank Errands</option>
-                  <option value="Grocery Pickup">Grocery Pickup</option>
-                </select>
+                <div className="flex gap-2">
+                  <input
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="Where should it be done? (address)"
+                    className={`${inputCls} flex-1`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAddressSearch(address)}
+                    className="px-4 h-11 rounded-xl border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] text-sm font-medium text-slate-200 transition shrink-0"
+                  >
+                    Find
+                  </button>
+                </div>
+                {geocoding && <p className="text-xs text-emerald-400 mt-2">Pinpointing...</p>}
+                {taskLocation && !geocoding && (
+                  <p className="text-xs text-emerald-400 mt-2">Location mapped</p>
+                )}
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-300 mb-1 block">Description</label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Describe what needs to be done..."
-                  rows={3}
-                  className="w-full p-4 rounded-xl bg-slate-950 border border-white/10 text-sm outline-none focus:border-blue-500 text-white resize-none"
-                />
+              <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+                <HiExclamationCircle className="text-emerald-400 text-sm shrink-0 mt-0.5" />
+                <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+                  Posting is free. Your helper will earn credits based on distance and task type
+                  once the work is complete.
+                </p>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-300 mb-1 block">Location / Address</label>
-                <input
-                  type="text"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="e.g., Block B, Near Park (500m)"
-                  className="w-full h-11 px-4 rounded-xl bg-slate-950 border border-white/10 text-sm outline-none focus:border-blue-500 text-white"
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 mt-4">
+              <div className="flex gap-2 pt-3">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold transition text-slate-300"
+                  className="flex-1 h-11 rounded-xl border border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.06] text-sm font-medium text-slate-300 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold transition text-white shadow-lg shadow-blue-600/20"
+                  className="flex-[1.4] h-11 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-sm font-bold text-[#04140a] transition shadow-lg shadow-emerald-500/20"
                 >
-                  Publish Task
+                  Publish task
                 </button>
               </div>
             </form>
@@ -257,8 +1106,407 @@ export default function Microtask() {
         </div>
       )}
 
-      <Footer />
+      {/* Completion Modal */}
+      {completionTask && (
+        <CompletionModal
+          task={completionTask}
+          onClose={() => setCompletionTask(null)}
+          onSubmit={handleSubmitCompletion}
+          submitting={submittingCompletion}
+        />
+      )}
 
+      {/* Dispute Modal */}
+      {disputeTask && (
+        <DisputeModal
+          task={disputeTask}
+          onClose={() => setDisputeTask(null)}
+          onSubmit={handleSubmitDispute}
+          submitting={submittingDispute}
+        />
+      )}
+
+      {/* Map Modal */}
+      {selectedTaskMap && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0d1218] border border-white/[0.08] rounded-3xl w-full max-w-xl shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-start px-6 pt-6">
+              <div className="min-w-0">
+                <h3 className="text-lg font-bold text-white truncate">{selectedTaskMap.title}</h3>
+                <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
+                  <HiLocationMarker className="shrink-0" />
+                  <span className="truncate">{selectedTaskMap.location?.address}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  stopNavigation();
+                  setSelectedTaskMap(null);
+                }}
+                className="w-9 h-9 rounded-xl hover:bg-white/[0.06] flex items-center justify-center text-slate-500 hover:text-slate-200 transition shrink-0"
+              >
+                <HiX className="text-lg" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.07] rounded-xl p-1">
+                {[
+                  { k: "home", l: "From home" },
+                  { k: "current", l: "From current location" },
+                ].map((o) => (
+                  <button
+                    key={o.k}
+                    type="button"
+                    onClick={() => {
+                      setRouteSource(o.k);
+                      setRouteSummary(null);
+                      setRouteData(null);
+                      setRouteError(false);
+                      stopNavigation();
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+                      routeSource === o.k
+                        ? "bg-emerald-500/15 text-emerald-300"
+                        : "text-slate-500 hover:text-slate-200"
+                    }`}
+                  >
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+
+              <div className="w-full h-64 rounded-2xl overflow-hidden border border-white/[0.08] relative z-0">
+                <MapContainer
+                  center={[
+                    Number(selectedTaskMap.location?.lat),
+                    Number(selectedTaskMap.location?.lng),
+                  ]}
+                  zoom={14}
+                  style={{ width: "100%", height: "100%" }}
+                >
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  {(() => {
+                    const routeOrigin = routeSource === "home" ? helperHomeLoc : location;
+                    if (!routeOrigin) return null;
+                    return (
+                      <RoutingMachine
+                        userLoc={routeOrigin}
+                        taskLoc={{
+                          lat: Number(selectedTaskMap.location?.lat),
+                          lng: Number(selectedTaskMap.location?.lng),
+                        }}
+                        onRouteFound={setRouteSummary}
+                        onRouteData={setRouteData}
+                        onRouteError={setRouteError}
+                        retryKey={retryKey}
+                      />
+                    );
+                  })()}
+                  {navigating && liveNavPos && (
+                    <Marker position={[liveNavPos.lat, liveNavPos.lng]}>
+                      <Popup>You are here</Popup>
+                    </Marker>
+                  )}
+                  <FollowUser position={liveNavPos} active={navigating} />
+                </MapContainer>
+              </div>
+
+              {!routeData && !routeError && !navigating && (
+                <div className="flex items-center justify-center gap-2.5 text-xs text-slate-400 bg-white/[0.03] border border-white/[0.07] rounded-xl py-3">
+                  <div className="w-3.5 h-3.5 border-2 border-white/10 border-t-emerald-500 rounded-full animate-spin" />
+                  Finding the best route...
+                </div>
+              )}
+
+              {routeError && !routeData && (
+                <div className="flex items-center justify-between gap-3 bg-red-500/[0.08] border border-red-500/20 rounded-xl p-3.5">
+                  <p className="text-[11px] text-red-300 leading-relaxed">
+                    Route service is busy or timed out. This happens sometimes on the free map server.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRouteError(false);
+                      setRetryKey((k) => k + 1);
+                    }}
+                    className="shrink-0 h-8 px-3 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 text-xs font-semibold transition"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {navigating && routeData?.instructions?.[currentStepIdx] && (
+                <div className="flex items-center gap-3.5 bg-emerald-500 rounded-2xl p-4 text-[#04140a]">
+                  {(() => {
+                    const step = routeData.instructions[currentStepIdx];
+                    const stepCoord = routeData.coordinates[step.index];
+                    const { Icon, label } = getManeuverIcon(step);
+                    const metersToTurn = liveNavPos
+                      ? Math.round(distanceMeters(liveNavPos, stepCoord))
+                      : null;
+                    return (
+                      <>
+                        <div className="w-11 h-11 rounded-xl bg-black/15 flex items-center justify-center shrink-0">
+                          <Icon className="text-2xl" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold truncate">{label}</p>
+                          <p className="text-xs opacity-80 truncate mt-0.5">
+                            {metersToTurn != null ? `In ${metersToTurn} m · ` : ""}
+                            {step.text || "Continue along route"}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {routeSummary && !navigating && (
+                <div className="flex items-center justify-center gap-4 text-sm bg-white/[0.03] border border-white/[0.07] rounded-xl py-3">
+                  <span className="text-white font-semibold">{routeSummary.distanceKm} km</span>
+                  <span className="text-slate-700">·</span>
+                  <span className="text-emerald-400 font-semibold">~{routeSummary.timeMin} min</span>
+                </div>
+              )}
+
+              {!navigating ? (
+                <button
+                  type="button"
+                  onClick={startNavigation}
+                  disabled={!routeData}
+                  className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#04140a] text-sm font-bold flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <HiPlay className="text-base" />
+                  Start navigation
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={stopNavigation}
+                  className="w-full h-12 rounded-xl bg-red-500/90 hover:bg-red-500 text-white text-sm font-bold flex items-center justify-center gap-2 transition"
+                >
+                  <HiX className="text-base" />
+                  Stop navigation
+                </button>
+              )}
+
+              {routeSource === "home" && !helperHomeLoc && (
+                <p className="text-[11px] text-amber-400/90 text-center">
+                  Set your home location in Profile for accurate route.
+                </p>
+              )}
+              {routeSource === "current" && !location && (
+                <p className="text-[11px] text-amber-400/90 text-center">
+                  Enable GPS to route from current location.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────── TASK CARD ─────────── */
+function TaskCard({ task, own, accepted, distance, onAccept, onDelete, onMap, onMarkDone, onDispute, onConfirm }) {
+  const status = task.status;
+  const reward = task.reward || 0;
+  const isOpen = status === "Open";
+  const isHelping = status === "Helping" || status === "In Progress";
+  const isAwaiting = status === "Awaiting Approval";
+  const isCompleted = status === "Completed";
+  const isDisputed = status === "Disputed";
+
+  const statusColor = isOpen
+    ? "text-emerald-300 bg-emerald-500/10 border-emerald-500/25"
+    : isHelping
+    ? "text-amber-300 bg-amber-500/10 border-amber-500/25"
+    : isAwaiting
+    ? "text-blue-300 bg-blue-500/10 border-blue-500/25"
+    : isDisputed
+    ? "text-red-300 bg-red-500/10 border-red-500/25"
+    : "text-slate-300 bg-white/[0.05] border-white/[0.1]";
+
+  const statusLabel = isAwaiting ? "Awaiting Approval" : status;
+
+  return (
+    <div className="rounded-3xl border border-emerald-500/[0.12] bg-gradient-to-br from-emerald-900/[0.18] via-[#0d1218] to-[#0d1218] hover:border-emerald-500/30 p-6 transition-colors duration-200 flex flex-col">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-400">
+          {task.category}
+        </span>
+        <div className="flex items-center gap-2">
+          {reward > 0 && !isCompleted && (
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-300">
+              +{reward} credits
+            </span>
+          )}
+          <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${statusColor}`}>
+            {statusLabel}
+          </span>
+        </div>
+      </div>
+
+      <h3 className="text-lg font-bold text-white leading-snug mb-2">{task.title}</h3>
+      <p className="text-sm text-slate-400 line-clamp-2 leading-relaxed mb-5">{task.description}</p>
+
+      <div className="space-y-2 mb-5 text-xs text-slate-400">
+        <div className="flex items-center gap-2">
+          <HiLocationMarker className="text-sm shrink-0 text-emerald-500/70" />
+          <span className="truncate">{task.location?.address || "Location unavailable"}</span>
+          {distance && (
+            <span className="ml-auto shrink-0 text-slate-300 font-semibold">{distance} km</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <HiUser className="text-sm shrink-0 text-emerald-500/70" />
+          <span className="truncate">
+            {task.poster?.fullname || task.poster?.name || "Neighbour"}
+          </span>
+        </div>
+      </div>
+
+      {accepted && isHelping && (
+        <div className="mb-4 text-xs font-medium text-emerald-300 bg-emerald-500/[0.08] border border-emerald-500/20 px-3 py-2 rounded-xl">
+          You are helping with this task
+        </div>
+      )}
+      {accepted && isAwaiting && (
+        <div className="mb-4 text-xs font-medium text-blue-300 bg-blue-500/[0.08] border border-blue-500/20 px-3 py-2 rounded-xl">
+          Waiting for the poster to confirm. Auto-confirms in 24 hours.
+        </div>
+      )}
+      {accepted && isCompleted && (
+        <div className="mb-4 text-xs font-medium text-emerald-300 bg-emerald-500/[0.08] border border-emerald-500/20 px-3 py-2 rounded-xl flex items-center gap-1.5">
+          <HiCheckCircle className="text-sm" />
+          Completed — {reward} credits added to your account
+        </div>
+      )}
+      {own && isAwaiting && (
+        <div className="mb-4 text-xs font-medium text-blue-300 bg-blue-500/[0.08] border border-blue-500/20 px-3 py-2 rounded-xl">
+          Helper submitted proof. Confirm the work or raise a dispute.
+        </div>
+      )}
+      {own && isCompleted && (
+        <div className="mb-4 text-xs font-medium text-slate-300 bg-white/[0.04] border border-white/[0.1] px-3 py-2 rounded-xl flex items-center gap-1.5">
+          <HiCheckCircle className="text-sm" />
+          Task completed — {reward} credits awarded to the helper
+        </div>
+      )}
+      {isDisputed && (
+        <div className="mb-4 text-xs font-medium text-red-300 bg-red-500/[0.08] border border-red-500/20 px-3 py-2 rounded-xl flex items-center gap-1.5">
+          <HiExclamationCircle className="text-sm" />
+          Under dispute — our team will review this within 48 hours
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 mt-auto">
+        <button
+          onClick={onMap}
+          className="flex-1 h-10 rounded-xl border border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.06] text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+        >
+          <HiMap className="text-sm" />
+          Route
+        </button>
+
+        {own && isOpen && (
+          <button
+            onClick={onDelete}
+            className="w-10 h-10 rounded-xl border border-white/[0.1] bg-white/[0.02] hover:bg-red-500/10 hover:border-red-500/30 text-slate-500 hover:text-red-400 flex items-center justify-center transition shrink-0"
+            title="Delete"
+          >
+            <HiTrash className="text-sm" />
+          </button>
+        )}
+        {own && isHelping && (
+          <span className="flex-1 h-10 rounded-xl bg-white/[0.03] text-slate-500 text-xs font-semibold flex items-center justify-center gap-1.5 border border-white/[0.08]">
+            <HiClock className="text-sm" />
+            Helper is working
+          </span>
+        )}
+        {own && isAwaiting && (
+          <>
+            <button
+              onClick={onDispute}
+              className="h-10 px-3 rounded-xl border border-white/[0.1] bg-white/[0.02] hover:bg-red-500/10 hover:border-red-500/30 text-slate-400 hover:text-red-400 text-xs font-semibold transition shrink-0"
+            >
+              Dispute
+            </button>
+            <button
+              onClick={onConfirm}
+              className="flex-1 h-10 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#04140a] text-xs font-bold transition"
+            >
+              Confirm
+            </button>
+          </>
+        )}
+        {own && isCompleted && (
+          <span className="flex-1 h-10 rounded-xl bg-emerald-500/[0.08] text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1.5 border border-emerald-500/20">
+            <HiCheckCircle className="text-sm" />
+            Completed
+          </span>
+        )}
+        {own && isDisputed && (
+          <span className="flex-1 h-10 rounded-xl bg-red-500/[0.08] text-red-300 text-xs font-semibold flex items-center justify-center gap-1.5 border border-red-500/20">
+            Under review
+          </span>
+        )}
+
+        {!own && !accepted && isOpen && (
+          <button
+            onClick={onAccept}
+            className="flex-1 h-10 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#04140a] text-xs font-bold transition"
+          >
+            Accept · +{reward}
+          </button>
+        )}
+        {!own && !accepted && isHelping && (
+          <span className="flex-1 h-10 rounded-xl bg-amber-500/[0.08] text-amber-300 text-xs font-semibold flex items-center justify-center gap-1.5 border border-amber-500/20">
+            <HiClock className="text-sm" />
+            In progress
+          </span>
+        )}
+        {!own && !accepted && isAwaiting && (
+          <span className="flex-1 h-10 rounded-xl bg-blue-500/[0.08] text-blue-300 text-xs font-semibold flex items-center justify-center gap-1.5 border border-blue-500/20">
+            Awaiting approval
+          </span>
+        )}
+        {!own && !accepted && isCompleted && (
+          <span className="flex-1 h-10 rounded-xl bg-white/[0.03] text-slate-400 text-xs font-semibold flex items-center justify-center gap-1.5 border border-white/[0.08]">
+            Completed
+          </span>
+        )}
+
+        {accepted && isHelping && (
+          <button
+            onClick={onMarkDone}
+            className="flex-1 h-10 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition"
+          >
+            Mark as done
+          </button>
+        )}
+        {accepted && isAwaiting && (
+          <span className="flex-1 h-10 rounded-xl bg-blue-500/[0.08] text-blue-300 text-xs font-semibold flex items-center justify-center gap-1.5 border border-blue-500/20">
+            Pending confirmation
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ text }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 px-4 rounded-3xl border border-dashed border-white/[0.1] bg-white/[0.01] text-center">
+      <div className="text-3xl mb-3">🤝</div>
+      <p className="text-sm text-slate-400">{text}</p>
     </div>
   );
 }

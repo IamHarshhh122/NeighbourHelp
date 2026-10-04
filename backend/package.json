@@ -17,9 +17,11 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "leaflet": "^1.9.4",
     "mongoose": "^9.9.4",
     "nodemailer": "^9.0.5",
     "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0"
+    "passport-google-oauth20": "^2.0.0",
+    "react-leaflet": "^5.0.0"
   }
 }
