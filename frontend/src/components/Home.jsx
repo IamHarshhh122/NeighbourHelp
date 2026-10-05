@@ -236,7 +236,6 @@ export default function Home() {
 
         </section>
 
-        {/* ================= MAP & VIDEO SECTION ================= */}
         <section className="relative z-20 max-w-[1100px] mx-auto px-4 mt-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
 
@@ -303,7 +302,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ================= FEATURES ================= */}
         <section className="max-w-5xl mx-auto px-4 mt-14 pb-16">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Feature icon={<HiOutlineShieldCheck />} title="Trusted & Secure" text="Verified community members and secure authentication." />

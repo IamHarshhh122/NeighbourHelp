@@ -1,4 +1,5 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import { HiOutlineLocationMarker, HiOutlineArrowUp } from "react-icons/hi";
 import { FaInstagram, FaLinkedinIn, FaGithub } from "react-icons/fa";
 import { motion } from "framer-motion";
@@ -27,17 +28,16 @@ const Footers = () => {
       title: "NeighbourHelp",
       links: [
         { label: "About us", href: "/about" },
-        { label: "Find help", href: "/requests" },
-        { label: "Join the community", href: "/signup" },
-        { label: "Contact", href: "/contact" },
+        { label: "Microtasks", href: "/microtask" },
+        { label: "Contact" , href: "/about"},
       ],
     },
     {
       title: "Good to know",
       links: [
-        { label: "Privacy", href: "/privacy" },
-        { label: "Terms", href: "/terms" },
-        { label: "Help & Support", href: "/help" },
+        { label: "Privacy" },
+        { label: "Terms" },
+        { label: "Help & Support" },
       ],
     },
   ];
@@ -52,9 +52,8 @@ const Footers = () => {
       <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-60" />
 
       <div className="relative max-w-7xl mx-auto px-5 sm:px-8 lg:px-10 py-10 sm:py-12">
-
         <div className="grid grid-cols-1 md:grid-cols-[1.6fr_1fr_1fr] gap-9 md:gap-12">
-
+          
           {/* BRAND BLOCK */}
           <div>
             <div className="flex items-center gap-3">
@@ -78,8 +77,7 @@ const Footers = () => {
             </div>
 
             <p className="mt-5 max-w-sm text-xs sm:text-sm leading-relaxed text-slate-500">
-              Ask for help. Offer a hand. Build a neighbourhood where
-              everyone is a little closer.
+              Ask for help. Offer a hand. Build a neighbourhood where everyone is a little closer.
             </p>
 
             {/* Socials */}
@@ -117,18 +115,27 @@ const Footers = () => {
               </p>
 
               <div className="flex flex-col gap-1">
-                {col.links.map((link, i) => (
-                  <a
-                    key={i}
-                    href={link.href}
-                    className="group relative flex items-center gap-2 py-2 text-xs font-medium text-slate-400 hover:text-white transition-colors"
-                  >
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0 h-[1px] bg-gradient-to-r from-blue-400 to-cyan-400 group-hover:w-3 transition-all duration-300" />
-                    <span className="group-hover:translate-x-4 transition-transform duration-300">
+                {col.links.map((link, i) =>
+                  link.href ? (
+                    <Link
+                      key={i}
+                      to={link.href}
+                      className="group relative flex items-center gap-2 py-2 text-xs font-medium text-slate-400 hover:text-white transition-colors"
+                    >
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0 h-[1px] bg-gradient-to-r from-blue-400 to-cyan-400 group-hover:w-3 transition-all duration-300" />
+                      <span className="group-hover:translate-x-4 transition-transform duration-300">
+                        {link.label}
+                      </span>
+                    </Link>
+                  ) : (
+                    <span
+                      key={i}
+                      className="py-2 text-xs font-medium text-slate-600 select-none cursor-default"
+                    >
                       {link.label}
                     </span>
-                  </a>
-                ))}
+                  )
+                )}
               </div>
             </div>
           ))}
@@ -153,7 +160,6 @@ const Footers = () => {
             </span>
           </motion.button>
         </div>
-
       </div>
     </footer>
   );
