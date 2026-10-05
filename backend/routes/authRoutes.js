@@ -9,6 +9,8 @@ const {
   saveHomeLocation,
 } = require("../controllers/authController");
 
+const CLIENT_URL = process.env.CLIENT_URL || "https://neighbour-help-sandy.vercel.app";
+
 router.post("/send-otp", sendOtp);
 router.post("/verify-otp", verifyOtp);
 router.post("/login", login);
@@ -27,7 +29,7 @@ router.get(
 router.get(
   "/google/callback",
   passport.authenticate("google", {
-    failureRedirect: "http://localhost:5173/login",
+    failureRedirect: `${CLIENT_URL}/login`,
   }),
   (req, res) => {
     const userData = encodeURIComponent(
@@ -38,7 +40,7 @@ router.get(
         points: req.user.points || 20,
       })
     );
-    res.redirect(`http://localhost:5173/?googleUser=${userData}`);
+    res.redirect(`${CLIENT_URL}/?googleUser=${userData}`);
   }
 );
 

@@ -12,15 +12,31 @@ const authRoutes = require("./routes/authRoutes");
 const taskRoutes = require("./routes/taskRoutes");
 
 const app = express();
+app.set("trust proxy", 1);
 
 app.use(express.json());
 
+// Dynamic Allowed Origins (Localhost + Live Vercel)
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://neighbour-help-sandy.vercel.app",
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, true); 
+      }
+    },
     credentials: true,
   })
 );
+
+const isProduction = process.env.NODE_ENV === "production" || !!process.env.RENDER;
 
 app.use(
   session({
@@ -28,7 +44,8 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false,
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
     },
@@ -38,12 +55,15 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Google Strategy with Dynamic Callback URL
+const backendBaseUrl = process.env.BACKEND_URL || "https://neighbourhelp-baaa.onrender.com";
+
 passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:5000/api/google/callback",
+      callbackURL: `${backendBaseUrl}/api/google/callback`,
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -102,6 +122,7 @@ mongoose
 // Routes
 app.use("/api", authRoutes);
 app.use("/api", taskRoutes);
+
 app.get("/", (req, res) => {
   res.json({
     success: true,
