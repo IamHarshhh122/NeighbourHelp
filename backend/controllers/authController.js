@@ -16,7 +16,7 @@ const formatUser = (user) => ({
   homeLng: user.homeLng ?? null,
 });
 
-// ================= SEND OTP =================
+//  SEND OTP 
 exports.sendOtp = async (req, res) => {
   try {
     const { email, fullname, password } = req.body;
@@ -31,9 +31,7 @@ exports.sendOtp = async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Pehle purana OTP delete karo agar exist karta hai
     await Otp.deleteMany({ email: normalizedEmail });
-
     // Database mein fresh OTP save karo (persistent in MongoDB)
     await Otp.create({
       email: normalizedEmail,
@@ -144,10 +142,10 @@ exports.sendOtp = async (req, res) => {
   }
 };
 
-// ================= VERIFY OTP =================
+// VERIFY OTP 
 exports.verifyOtp = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp, fullname, password } = req.body;
 
     if (!email || !otp) {
       return res.status(400).json({
@@ -159,7 +157,7 @@ exports.verifyOtp = async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
     const cleanOtp = String(otp).trim();
 
-    // MongoDB se OTP dhoondo
+    // Database se OTP dhoondo
     const otpRecord = await Otp.findOne({ email: normalizedEmail });
 
     console.log(`[Verify Check] Email: ${normalizedEmail} | Given: ${cleanOtp} | Stored: ${otpRecord?.code}`);
@@ -178,30 +176,34 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
-    let user = await User.findOne({ email: normalizedEmail });
-    let hashedPassword = null;
+    // Name aur Password: ya to request body se lo ya jo OTP save karte waqt store kiya tha
+    const finalName = fullname || otpRecord.fullname || normalizedEmail.split("@")[0];
+    const rawPassword = password || otpRecord.password;
 
-    if (otpRecord.password) {
-      hashedPassword = await bcrypt.hash(otpRecord.password, 10);
+    let hashedPassword = null;
+    if (rawPassword) {
+      hashedPassword = await bcrypt.hash(rawPassword, 10);
     }
+
+    let user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       user = await User.create({
         email: normalizedEmail,
-        name: otpRecord.fullname || normalizedEmail.split("@")[0],
+        name: finalName,
         password: hashedPassword,
       });
     } else {
-      if (!user.password && hashedPassword) {
+      if (hashedPassword) {
         user.password = hashedPassword;
-        if (otpRecord.fullname && (!user.name || user.name === normalizedEmail.split("@")[0])) {
-          user.name = otpRecord.fullname;
-        }
-        await user.save();
       }
+      if (finalName && (!user.name || user.name === normalizedEmail.split("@")[0])) {
+        user.name = finalName;
+      }
+      await user.save();
     }
 
-    // Verification ke baad database se OTP delete kar do
+    // Verification complete hone par OTP delete karo
     await Otp.deleteMany({ email: normalizedEmail });
 
     return res.status(200).json({
@@ -210,15 +212,15 @@ exports.verifyOtp = async (req, res) => {
       user: formatUser(user),
     });
   } catch (error) {
-    console.error("Verify OTP Error:", error);
+    console.error("Verify OTP Error Detailed:", error);
     return res.status(500).json({
       success: false,
-      message: "Server error while verifying OTP!",
+      message: error.message || "Server error while verifying OTP!",
     });
   }
 };
 
-// ================= LOGIN =================
+//  LOGIN 
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -270,7 +272,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// ================= SAVE HOME LOCATION =================
+// SAVE HOME LOCATION 
 exports.saveHomeLocation = async (req, res) => {
   try {
     const { email, homeAddress, homeLat, homeLng } = req.body;
