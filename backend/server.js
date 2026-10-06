@@ -23,7 +23,6 @@ const BACKEND_URL = stripSlash(
   process.env.BACKEND_URL || "https://neighbourhelp-backend.onrender.com"
 );
 
-// Fail fast on missing critical config
 const required = [
   "MONGO_URI",
   "GOOGLE_CLIENT_ID",
@@ -39,11 +38,8 @@ if (missing.length) {
 const app = express();
 app.set("trust proxy", 1);
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
-// ---------- CORS ----------
-// Extra origins (e.g. preview/staging) can be supplied as a comma-separated
-// list in CORS_ORIGINS.
 const extraOrigins = (process.env.CORS_ORIGINS || "")
   .split(",")
   .map(stripSlash)
@@ -53,7 +49,6 @@ const allowedOrigins = [...new Set([CLIENT_URL, ...extraOrigins])];
 
 const corsOptions = {
   origin(origin, callback) {
-    // Allow non-browser requests (curl, health checks, server-to-server)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(stripSlash(origin))) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
@@ -64,9 +59,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
 
-// ---------- Session ----------
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "dev-only-session-secret",
@@ -84,10 +77,6 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ---------- Passport Google Strategy ----------
-// This callbackURL must be listed EXACTLY under "Authorized redirect URIs"
-// in Google Cloud Console:
-//   https://neighbourhelp-backend.onrender.com/api/google/callback
 passport.use(
   new GoogleStrategy(
     {
@@ -141,13 +130,11 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// ---------- Database ----------
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected Successfully!"))
   .catch((error) => console.error("MongoDB Connection Error:", error.message));
 
-// ---------- Routes ----------
 app.use("/api", authRoutes);
 app.use("/api", taskRoutes);
 
@@ -158,6 +145,7 @@ app.get("/", (req, res) => {
   });
 });
 
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err.message);
   const status = err.message?.startsWith("CORS blocked") ? 403 : 500;
