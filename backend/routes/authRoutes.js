@@ -9,7 +9,9 @@ const {
   saveHomeLocation,
 } = require("../controllers/authController");
 
-const CLIENT_URL = process.env.CLIENT_URL || "https://neighbour-help-sandy.vercel.app";
+// Active Vercel live domain
+const CLIENT_URL =
+  process.env.CLIENT_URL || "https://neighbour-help-mln9.vercel.app";
 
 router.post("/send-otp", sendOtp);
 router.post("/verify-otp", verifyOtp);
@@ -35,12 +37,12 @@ router.get(
     const userData = encodeURIComponent(
       JSON.stringify({
         _id: req.user._id,
-        name: req.user.name,
+        fullname: req.user.name,
         email: req.user.email,
         points: req.user.points || 20,
       })
     );
-    res.redirect(`${CLIENT_URL}/?googleUser=${userData}`);
+    res.redirect(`${CLIENT_URL}/oauth-success?user=${userData}`);
   }
 );
 

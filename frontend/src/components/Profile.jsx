@@ -16,7 +16,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 
 
-const API = "http://localhost:5000/api";
+const BACKEND_URL =
+  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com";
+const API = `${BACKEND_URL}/api`;
 
 export default function Profile() {
   const [user, setUser] = useState(null);
