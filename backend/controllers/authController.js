@@ -1,15 +1,19 @@
 const User = require("../model/User");
 const bcrypt = require("bcryptjs");
-const { Resend } = require("resend");
+const brevo = require("@getbrevo/brevo");
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Brevo API client
+const apiInstance = new brevo.TransactionalEmailsApi();
+apiInstance.setApiKey(
+  brevo.TransactionalEmailsApiApiKeys.apiKey,
+  process.env.BREVO_API_KEY
+);
 
 const otpStorage = {};
 const signupTempStorage = {};
 
 const normalizeEmail = (email) => (email ? email.toLowerCase().trim() : "");
 
-// Helper: One user shape for every auth flow (password, OTP, Google)
 const formatUser = (user) => ({
   _id: user._id,
   id: user._id,
@@ -64,29 +68,23 @@ exports.sendOtp = async (req, res) => {
 </html>
     `;
 
-    const { data, error } = await resend.emails.send({
-      from: "NeighbourHelp <onboarding@resend.dev>",
-      to: normalizedEmail,
-      subject: `${otp} is your NeighbourHelp verification code`,
-      html: emailHtml,
-    });
+    const sendSmtpEmail = new brevo.SendSmtpEmail();
+    sendSmtpEmail.subject = `${otp} is your NeighbourHelp verification code`;
+    sendSmtpEmail.htmlContent = emailHtml;
+    sendSmtpEmail.sender = { 
+      name: "NeighbourHelp", 
+      email: process.env.EMAIL_USER // Tumhara verified Gmail
+    };
+    sendSmtpEmail.to = [{ email: normalizedEmail }];
 
-    if (error) {
-      console.error("Resend API Error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to send verification email via provider!",
-      });
-    }
-
-    console.log("OTP sent successfully:", data);
+    await apiInstance.sendTransacEmail(sendSmtpEmail);
 
     return res.status(200).json({
       success: true,
       message: "Verification code sent successfully!",
     });
   } catch (error) {
-    console.error("OTP Send Error:", error);
+    console.error("Brevo OTP Send Error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to send verification email!",
