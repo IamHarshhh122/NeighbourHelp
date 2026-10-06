@@ -1,19 +1,10 @@
-const User = require("../model/User");
-const nodemailer = require("nodemailer");
+let User = require("../model/User");
+if (User.User) User = User.User; // Safety check if exported as an object
+
+let Otp = require("../model/Otp");
+if (Otp.Otp) Otp = Otp.Otp;
+
 const bcrypt = require("bcryptjs");
-
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
-
-const otpStorage = new Map();
-const signupTempStorage = new Map();
 
 const normalizeEmail = (email) => (email ? email.toLowerCase().trim() : "");
 
@@ -29,52 +20,92 @@ const formatUser = (user) => ({
   homeLng: user.homeLng ?? null,
 });
 
+// Sleek Dark-themed Email HTML
+const getEmailHtml = (otp) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeighbourHelp Verification</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0b0f19; padding: 40px 15px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 480px; background-color: #111827; border: 1px solid #1f2937; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);">
+          <tr>
+            <td style="padding: 35px 35px 20px 35px; text-align: center; border-bottom: 1px solid #1f2937;">
+              <div style="display: inline-block; padding: 8px 18px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 50px; margin-bottom: 12px;">
+                <span style="color: #60a5fa; font-size: 13px; font-weight: 600; letter-spacing: 0.5px;">COMMUNITY NETWORK</span>
+              </div>
+              <h1 style="margin: 0; font-size: 26px; font-weight: 800; color: #f9fafb; letter-spacing: -0.5px;">
+                Neighbour<span style="color: #38bdf8;">Help</span>
+              </h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 30px 35px 20px 35px; text-align: center;">
+              <h2 style="margin: 0 0 10px 0; font-size: 20px; font-weight: 700; color: #f3f4f6;">Verify Your Account</h2>
+              <p style="margin: 0; font-size: 14px; line-height: 22px; color: #9ca3af;">
+                Welcome to NeighbourHelp! Use the 6-digit verification code below to complete your registration.
+              </p>
+              
+              <div style="margin: 28px 0; padding: 22px 15px; background: #0f172a; border: 1px dashed #38bdf8; border-radius: 14px;">
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px;">ONE-TIME PASSWORD</div>
+                <div style="font-size: 36px; font-weight: 800; color: #38bdf8; letter-spacing: 8px; font-family: 'Courier New', monospace;">${otp}</div>
+              </div>
+
+              <p style="margin: 0; font-size: 12px; color: #6b7280;">
+                ⏱ This code will expire in <strong style="color: #9ca3af;">10 minutes</strong>.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 35px 30px 35px; text-align: center; border-top: 1px solid #1f2937;">
+              <p style="margin: 0; font-size: 11px; color: #4b5563; line-height: 18px;">
+                If you did not request this code, you can safely ignore this email.<br>
+                &copy; 2026 NeighbourHelp Platform. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
+// Brevo REST API Sender
 const sendVerificationEmail = async (email, otp) => {
-  await transporter.sendMail({
-    from: `"NeighbourHelp" <${process.env.EMAIL_USER}>`,
-    to: email,
-    subject: `${otp} is your NeighbourHelp verification code`,
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <body style="margin:0;padding:20px;background:#f1f5f9;font-family:Arial,sans-serif">
-        <div style="max-width:480px;margin:auto;background:#ffffff;padding:28px;border-radius:16px;text-align:center">
-          <h2 style="color:#0f172a;margin:0 0 20px">
-            Neighbour<span style="color:#2563eb">Help</span>
-          </h2>
-
-          <h3 style="color:#0f172a;margin-bottom:8px">
-            Verify your email
-          </h3>
-
-          <p style="color:#64748b;font-size:14px">
-            Use the verification code below to continue.
-          </p>
-
-          <div style="padding:20px;background:#eff6ff;border-radius:12px;margin:20px 0">
-            <div style="font-size:11px;color:#64748b;margin-bottom:8px">
-              VERIFICATION CODE
-            </div>
-
-            <div style="font-size:30px;font-weight:bold;color:#2563eb;letter-spacing:6px">
-              ${otp}
-            </div>
-          </div>
-
-          <p style="color:#64748b;font-size:12px">
-            This code expires in 5 minutes.
-          </p>
-
-          <p style="color:#94a3b8;font-size:11px;margin-top:20px">
-            If you didn't request this code, you can safely ignore this email.
-          </p>
-        </div>
-      </body>
-      </html>
-    `,
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "accept": "application/json",
+      "api-key": process.env.BREVO_API_KEY,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      sender: {
+        name: "NeighbourHelp",
+        email: process.env.EMAIL_USER,
+      },
+      to: [{ email }],
+      subject: `Your NeighbourHelp Verification Code is ${otp}`,
+      htmlContent: getEmailHtml(otp),
+    }),
   });
+
+  const data = await response.json();
+  if (!response.ok) {
+    console.error("Brevo API Error:", data);
+    throw new Error(data.message || "Failed to send email via Brevo API");
+  }
+  return data;
 };
 
+// ================= SEND OTP =================
 exports.sendOtp = async (req, res) => {
   try {
     const { email, fullname, password } = req.body;
@@ -103,32 +134,30 @@ exports.sendOtp = async (req, res) => {
         });
       }
 
-      const existingUser = await User.findOne({
-        email: normalizedEmail,
-      });
-
+      const existingUser = await User.findOne({ email: normalizedEmail });
       if (existingUser) {
         return res.status(400).json({
           success: false,
           message: "An account already exists with this email. Please login.",
         });
       }
-
-      const hashedPassword = await bcrypt.hash(password, 10);
-
-      signupTempStorage.set(normalizedEmail, {
-        fullname: fullname.trim(),
-        password: hashedPassword,
-        expiresAt: Date.now() + 10 * 60 * 1000,
-      });
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
 
-    otpStorage.set(normalizedEmail, {
+    // Remove any previous active OTP from MongoDB
+    await Otp.deleteMany({ email: normalizedEmail });
+
+    // Store in MongoDB (Persists across Render restarts)
+    await Otp.create({
+      email: normalizedEmail,
       code: otp,
-      expiresAt: Date.now() + 5 * 60 * 1000,
+      fullname: fullname ? fullname.trim() : "",
+      password: hashedPassword || "",
     });
+
+    console.log(`[OTP Stored in DB] Email: ${normalizedEmail} | OTP: ${otp}`);
 
     await sendVerificationEmail(normalizedEmail, otp);
 
@@ -138,17 +167,14 @@ exports.sendOtp = async (req, res) => {
     });
   } catch (error) {
     console.error("OTP Send Error:", error);
-
     return res.status(500).json({
       success: false,
-      message:
-        error.code === "EAUTH"
-          ? "Email service authentication failed. Check EMAIL_USER and EMAIL_PASS."
-          : "Failed to send verification email!",
+      message: error.message || "Failed to send verification email!",
     });
   }
 };
 
+// ================= VERIFY OTP =================
 exports.verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -161,7 +187,10 @@ exports.verifyOtp = async (req, res) => {
     }
 
     const normalizedEmail = normalizeEmail(email);
-    const storedOtp = otpStorage.get(normalizedEmail);
+    const cleanOtp = String(otp).trim();
+
+    // Fetch from MongoDB
+    const storedOtp = await Otp.findOne({ email: normalizedEmail });
 
     if (!storedOtp) {
       return res.status(400).json({
@@ -170,44 +199,18 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
-    if (Date.now() > storedOtp.expiresAt) {
-      otpStorage.delete(normalizedEmail);
-      signupTempStorage.delete(normalizedEmail);
-
-      return res.status(400).json({
-        success: false,
-        message: "OTP has expired. Please request a new code!",
-      });
-    }
-
-    if (storedOtp.code !== String(otp).trim()) {
+    if (storedOtp.code !== cleanOtp) {
       return res.status(400).json({
         success: false,
         message: "Incorrect verification code!",
       });
     }
 
-    otpStorage.delete(normalizedEmail);
+    let user = await User.findOne({ email: normalizedEmail });
 
-    let user = await User.findOne({
-      email: normalizedEmail,
-    });
-
-    const tempData = signupTempStorage.get(normalizedEmail);
-
-    if (tempData) {
-      if (Date.now() > tempData.expiresAt) {
-        signupTempStorage.delete(normalizedEmail);
-
-        return res.status(400).json({
-          success: false,
-          message: "Signup session expired. Please request a new OTP!",
-        });
-      }
-
+    if (storedOtp.password) {
       if (user) {
-        signupTempStorage.delete(normalizedEmail);
-
+        await Otp.deleteMany({ email: normalizedEmail });
         return res.status(400).json({
           success: false,
           message: "An account already exists with this email. Please login.",
@@ -216,12 +219,12 @@ exports.verifyOtp = async (req, res) => {
 
       user = await User.create({
         email: normalizedEmail,
-        name: tempData.fullname,
-        password: tempData.password,
+        name: storedOtp.fullname || normalizedEmail.split("@")[0],
+        password: storedOtp.password,
         points: 20,
       });
 
-      signupTempStorage.delete(normalizedEmail);
+      await Otp.deleteMany({ email: normalizedEmail });
 
       return res.status(200).json({
         success: true,
@@ -237,6 +240,8 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
+    await Otp.deleteMany({ email: normalizedEmail });
+
     return res.status(200).json({
       success: true,
       message: "OTP verified successfully!",
@@ -244,14 +249,14 @@ exports.verifyOtp = async (req, res) => {
     });
   } catch (error) {
     console.error("Verify OTP Error:", error);
-
     return res.status(500).json({
       success: false,
-      message: "Server error while verifying OTP!",
+      message: error.message || "Server error while verifying OTP!",
     });
   }
 };
 
+// ================= LOGIN =================
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -264,10 +269,7 @@ exports.login = async (req, res) => {
     }
 
     const normalizedEmail = normalizeEmail(email);
-
-    const user = await User.findOne({
-      email: normalizedEmail,
-    });
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(400).json({
@@ -279,8 +281,7 @@ exports.login = async (req, res) => {
     if (!user.password) {
       return res.status(400).json({
         success: false,
-        message:
-          "This account does not have a password. Please continue with Google or use OTP login.",
+        message: "This account does not have a password. Please continue with Google or use OTP login.",
       });
     }
 
@@ -300,7 +301,6 @@ exports.login = async (req, res) => {
     });
   } catch (error) {
     console.error("Login Error:", error);
-
     return res.status(500).json({
       success: false,
       message: "Server error during login!",
@@ -346,7 +346,6 @@ exports.saveHomeLocation = async (req, res) => {
     });
   } catch (error) {
     console.error("Save Home Location Error:", error);
-
     return res.status(500).json({
       success: false,
       message: "Server error while saving location!",
