@@ -1,28 +1,14 @@
 const User = require("../model/User");
-const nodemailer = require("nodemailer");
 const bcrypt = require("bcryptjs");
-import dns from 'node:dns';
+const { Resend } = require("resend");
 
-dns.setDefaultResultOrder('ipv4first');
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, 
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  family: 4,
-  tls: {
-    rejectUnauthorized: false
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const otpStorage = {};
 const signupTempStorage = {};
 
 const normalizeEmail = (email) => (email ? email.toLowerCase().trim() : "");
+
 // Helper: One user shape for every auth flow (password, OTP, Google)
 const formatUser = (user) => ({
   _id: user._id,
@@ -60,11 +46,7 @@ exports.sendOtp = async (req, res) => {
       signupTempStorage[normalizedEmail] = { fullname, password };
     }
 
-    const mailOptions = {
-      from: `"NeighbourHelp" <${process.env.EMAIL_USER}>`,
-      to: normalizedEmail,
-      subject: `${otp} is your NeighbourHelp verification code`,
-      html: `
+    const emailHtml = `
 <!DOCTYPE html>
 <html>
 <body style="margin:0;padding:20px;background:#f1f5f9;font-family:Arial">
@@ -80,10 +62,24 @@ exports.sendOtp = async (req, res) => {
   </div>
 </body>
 </html>
-      `,
-    };
+    `;
 
-    await transporter.sendMail(mailOptions);
+    const { data, error } = await resend.emails.send({
+      from: "NeighbourHelp <onboarding@resend.dev>",
+      to: normalizedEmail,
+      subject: `${otp} is your NeighbourHelp verification code`,
+      html: emailHtml,
+    });
+
+    if (error) {
+      console.error("Resend API Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send verification email via provider!",
+      });
+    }
+
+    console.log("OTP sent successfully:", data);
 
     return res.status(200).json({
       success: true,
@@ -98,7 +94,7 @@ exports.sendOtp = async (req, res) => {
   }
 };
 
-//  VERIFY OTP 
+// VERIFY OTP 
 exports.verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -229,7 +225,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// ================= SAVE HOME LOCATION =================
+// SAVE HOME LOCATION 
 exports.saveHomeLocation = async (req, res) => {
   try {
     const { email, homeAddress, homeLat, homeLng } = req.body;
