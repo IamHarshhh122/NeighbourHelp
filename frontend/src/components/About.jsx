@@ -245,7 +245,7 @@ export default function About() {
           </p>
         </header>
 
-        {/* ─────── THE IDEA ─────── */}
+        {/*THE IDEA*/}
         <section className="mb-16">
           <div className="rounded-3xl border border-emerald-500/[0.15] bg-gradient-to-br from-emerald-900/[0.15] via-[#0d1218] to-[#0d1218] p-7 sm:p-10">
             <div className="flex items-center gap-3 mb-5">
@@ -276,7 +276,7 @@ export default function About() {
           </div>
         </section>
 
-        {/* ─────── HOW IT WORKS ─────── */}
+        {/* HOW IT WORKS ?*/}
         <section className="mb-16">
           <div className="text-center mb-10">
             <h2 className="text-3xl font-bold text-white mb-3">How it works</h2>
@@ -333,7 +333,7 @@ export default function About() {
           </div>
         </section>
 
-        {/* ─────── CREDITS EXPLAINED ─────── */}
+        {/* CREDITS EXPLAINED*/}
         <section className="mb-16">
           <div className="rounded-3xl border border-amber-500/[0.15] bg-gradient-to-br from-amber-900/[0.1] via-[#0d1218] to-[#0d1218] p-7 sm:p-10">
             <div className="flex items-center gap-3 mb-5">
@@ -374,7 +374,7 @@ export default function About() {
           </div>
         </section>
 
-        {/* ─────── TECH STACK ─────── */}
+        {/* TECH STACK*/}
         <section className="mb-16">
           <div className="text-center mb-10">
             <div className="inline-flex items-center gap-2 mb-4">
@@ -426,7 +426,7 @@ export default function About() {
           </div>
         </section>
 
-        {/* ─────── HOW IT ALL CONNECTS ─────── */}
+        {/*HOW IT ALL CONNECTS */}
         <section className="mb-16">
           <div className="text-center mb-10">
             <h2 className="text-3xl font-bold text-white mb-3">How it all connects</h2>
@@ -480,7 +480,6 @@ export default function About() {
           </div>
         </section>
 
-        {/* ─────── TEAM ─────── */}
         <section className="mb-16">
           <div className="text-center mb-10">
             <div className="inline-flex items-center gap-2 mb-4">
@@ -579,7 +578,6 @@ export default function About() {
           </div>
         </section>
 
-        {/* ─────── CTA ─────── */}
         <section className="text-center">
           <h3 className="text-2xl font-bold text-white mb-3">Ready to help your neighbour?</h3>
           <p className="text-sm text-slate-400 mb-6">

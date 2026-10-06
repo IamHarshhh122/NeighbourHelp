@@ -7,13 +7,11 @@ import {
 } from "react-icons/hi";
 import { motion, AnimatePresence } from "framer-motion";
 
-/* ───────────── BRAND LOGO ───────────── */
+/* BRAND LOGO */
 const BrandLogo = () => {
   return (
     <Link to="/" className="group flex items-center gap-3 select-none">
-      {/* ICON */}
       <div className="relative w-10 h-10 shrink-0">
-        {/* Rotating conic ring — slow */}
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
@@ -59,7 +57,7 @@ const BrandLogo = () => {
   );
 };
 
-/* ───────────── NAVBAR ───────────── */
+/*Navbar*/
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const [user, setUser] = useState(null);
@@ -115,7 +113,7 @@ export default function Navbar() {
 
   return (
     <>
-      {/* ───────────── TOP NAVBAR ───────────── */}
+      
       <header
         className={`sticky top-0 z-50 w-full transition-[background-color,box-shadow,border-color] duration-300 ${
           scrolled
@@ -268,7 +266,7 @@ export default function Navbar() {
         </div>
       </header>
 
-      {/* ───────────── MOBILE DRAWER ───────────── */}
+      {/*  MOBILE DRAWER  */}
       <AnimatePresence>
         {isOpen && (
           <>

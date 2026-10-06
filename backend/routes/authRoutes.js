@@ -9,19 +9,17 @@ const {
   saveHomeLocation,
 } = require("../controllers/authController");
 
-// Live Vercel frontend (no trailing slash)
-const CLIENT_URL = (
+const stripSlash = (url) => (url || "").trim().replace(/\/+$/, "");
+
+const CLIENT_URL = stripSlash(
   process.env.CLIENT_URL || "https://neighbour-help-mln9.vercel.app"
-)
-  .trim()
-  .replace(/\/+$/, "");
+);
 
 router.post("/send-otp", sendOtp);
 router.post("/verify-otp", verifyOtp);
 router.post("/login", login);
 router.put("/users/home-location", saveHomeLocation);
 
-// 1. Google Auth start: GET /api/google
 router.get(
   "/google",
   passport.authenticate("google", {
@@ -30,7 +28,6 @@ router.get(
   })
 );
 
-// 2. Google Auth callback: GET /api/google/callback
 router.get(
   "/google/callback",
   passport.authenticate("google", {
@@ -40,10 +37,14 @@ router.get(
     const userData = encodeURIComponent(
       JSON.stringify({
         _id: req.user._id,
+        id: req.user._id,
         fullname: req.user.name,
         name: req.user.name,
         email: req.user.email,
         points: req.user.points ?? 20,
+        homeAddress: req.user.homeAddress || "",
+        homeLat: req.user.homeLat ?? null,
+        homeLng: req.user.homeLng ?? null,
       })
     );
 

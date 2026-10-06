@@ -15,9 +15,7 @@ const transporter = nodemailer.createTransport({
 const otpStorage = {};
 const signupTempStorage = {};
 
-// Helper: Normalize email
 const normalizeEmail = (email) => (email ? email.toLowerCase().trim() : "");
-
 // Helper: One user shape for every auth flow (password, OTP, Google)
 const formatUser = (user) => ({
   _id: user._id,
@@ -31,7 +29,7 @@ const formatUser = (user) => ({
   homeLng: user.homeLng ?? null,
 });
 
-// ================= SEND OTP =================
+// SEND OTP 
 exports.sendOtp = async (req, res) => {
   try {
     const { email, fullname, password } = req.body;
@@ -93,7 +91,7 @@ exports.sendOtp = async (req, res) => {
   }
 };
 
-// ================= VERIFY OTP =================
+//  VERIFY OTP 
 exports.verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -172,7 +170,7 @@ exports.verifyOtp = async (req, res) => {
   }
 };
 
-// ================= LOGIN =================
+// LOGIN 
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
