@@ -56,7 +56,7 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // Google Strategy with Dynamic Callback URL
-const backendBaseUrl = process.env.BACKEND_URL || "https://neighbourhelp-baaa.onrender.com";
+const backendBaseUrl = process.env.BACKEND_URL || "https://neighbourhelp-backend.onrender.com";
 
 passport.use(
   new GoogleStrategy(
