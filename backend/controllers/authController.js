@@ -1,13 +1,5 @@
 const User = require("../model/User");
 const bcrypt = require("bcryptjs");
-const brevo = require("@getbrevo/brevo");
-
-// Initialize Brevo API client
-const apiInstance = new brevo.TransactionalEmailsApi();
-apiInstance.setApiKey(
-  brevo.TransactionalEmailsApiApiKeys.apiKey,
-  process.env.BREVO_API_KEY
-);
 
 const otpStorage = {};
 const signupTempStorage = {};
@@ -68,16 +60,36 @@ exports.sendOtp = async (req, res) => {
 </html>
     `;
 
-    const sendSmtpEmail = new brevo.SendSmtpEmail();
-    sendSmtpEmail.subject = `${otp} is your NeighbourHelp verification code`;
-    sendSmtpEmail.htmlContent = emailHtml;
-    sendSmtpEmail.sender = { 
-      name: "NeighbourHelp", 
-      email: process.env.EMAIL_USER // Tumhara verified Gmail
-    };
-    sendSmtpEmail.to = [{ email: normalizedEmail }];
+    // Direct REST API Call (Zero dependency, 100% reliable)
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "api-key": process.env.BREVO_API_KEY,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: {
+          name: "NeighbourHelp",
+          email: process.env.EMAIL_USER,
+        },
+        to: [{ email: normalizedEmail }],
+        subject: `${otp} is your NeighbourHelp verification code`,
+        htmlContent: emailHtml,
+      }),
+    });
 
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Brevo API Response Error:", data);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send verification email via provider!",
+      });
+    }
+
+    console.log("Email sent successfully via Brevo:", data);
 
     return res.status(200).json({
       success: true,
