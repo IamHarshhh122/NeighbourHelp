@@ -1,9 +1,6 @@
 const User = require("../model/User");
+const Otp = require("../model/Otp");
 const bcrypt = require("bcryptjs");
-
-// In-memory OTP storage
-const otpStorage = {};
-const signupTempStorage = {};
 
 const normalizeEmail = (email) => (email ? String(email).toLowerCase().trim() : "");
 
@@ -19,7 +16,7 @@ const formatUser = (user) => ({
   homeLng: user.homeLng ?? null,
 });
 
-//SEND OTP 
+// ================= SEND OTP =================
 exports.sendOtp = async (req, res) => {
   try {
     const { email, fullname, password } = req.body;
@@ -34,17 +31,18 @@ exports.sendOtp = async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // 10 minute expiry window
-    otpStorage[normalizedEmail] = {
+    // Pehle purana OTP delete karo agar exist karta hai
+    await Otp.deleteMany({ email: normalizedEmail });
+
+    // Database mein fresh OTP save karo (persistent in MongoDB)
+    await Otp.create({
+      email: normalizedEmail,
       code: otp,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    };
+      fullname: fullname || "",
+      password: password || "",
+    });
 
-    if (fullname && password) {
-      signupTempStorage[normalizedEmail] = { fullname, password };
-    }
-
-    console.log(`[OTP Generated] Email: ${normalizedEmail} | OTP: ${otp}`);
+    console.log(`[MongoDB OTP Saved] Email: ${normalizedEmail} | OTP: ${otp}`);
 
     // Sleek Dark Theme HTML Template
     const emailHtml = `
@@ -55,14 +53,11 @@ exports.sendOtp = async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NeighbourHelp Verification</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+<body style="margin: 0; padding: 0; background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0b0f19; padding: 40px 15px;">
     <tr>
       <td align="center">
-        <!-- Main Card -->
         <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 480px; background-color: #111827; border: 1px solid #1f2937; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);">
-          
-          <!-- Header Bar -->
           <tr>
             <td style="padding: 35px 35px 20px 35px; text-align: center; border-bottom: 1px solid #1f2937;">
               <div style="display: inline-block; padding: 8px 18px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 50px; margin-bottom: 12px;">
@@ -73,8 +68,6 @@ exports.sendOtp = async (req, res) => {
               </h1>
             </td>
           </tr>
-
-          <!-- Content Body -->
           <tr>
             <td style="padding: 30px 35px 20px 35px; text-align: center;">
               <h2 style="margin: 0 0 10px 0; font-size: 20px; font-weight: 700; color: #f3f4f6;">Verify Your Account</h2>
@@ -82,7 +75,6 @@ exports.sendOtp = async (req, res) => {
                 Welcome to NeighbourHelp! Use the 6-digit verification code below to complete your registration.
               </p>
               
-              <!-- OTP Box -->
               <div style="margin: 28px 0; padding: 22px 15px; background: #0f172a; border: 1px dashed #38bdf8; border-radius: 14px;">
                 <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px;">ONE-TIME PASSWORD</div>
                 <div style="font-size: 36px; font-weight: 800; color: #38bdf8; letter-spacing: 8px; font-family: 'Courier New', monospace;">${otp}</div>
@@ -93,8 +85,6 @@ exports.sendOtp = async (req, res) => {
               </p>
             </td>
           </tr>
-
-          <!-- Footer -->
           <tr>
             <td style="padding: 20px 35px 30px 35px; text-align: center; border-top: 1px solid #1f2937;">
               <p style="margin: 0; font-size: 11px; color: #4b5563; line-height: 18px;">
@@ -103,7 +93,6 @@ exports.sendOtp = async (req, res) => {
               </p>
             </td>
           </tr>
-
         </table>
       </td>
     </tr>
@@ -155,7 +144,7 @@ exports.sendOtp = async (req, res) => {
   }
 };
 
-//  VERIFY OTP 
+// ================= VERIFY OTP =================
 exports.verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -169,60 +158,51 @@ exports.verifyOtp = async (req, res) => {
 
     const normalizedEmail = normalizeEmail(email);
     const cleanOtp = String(otp).trim();
-    const storedOtp = otpStorage[normalizedEmail];
 
-    console.log(`[Verify Attempt] Email: ${normalizedEmail} | Entered OTP: ${cleanOtp}`);
-    console.log(`[Stored Record]`, storedOtp);
+    // MongoDB se OTP dhoondo
+    const otpRecord = await Otp.findOne({ email: normalizedEmail });
 
-    if (!storedOtp) {
+    console.log(`[Verify Check] Email: ${normalizedEmail} | Given: ${cleanOtp} | Stored: ${otpRecord?.code}`);
+
+    if (!otpRecord) {
       return res.status(400).json({
         success: false,
         message: "OTP not found or expired. Please request a new code!",
       });
     }
 
-    if (Date.now() > storedOtp.expiresAt) {
-      delete otpStorage[normalizedEmail];
-      return res.status(400).json({
-        success: false,
-        message: "OTP has expired. Please request a new code!",
-      });
-    }
-
-    if (storedOtp.code !== cleanOtp) {
+    if (otpRecord.code !== cleanOtp) {
       return res.status(400).json({
         success: false,
         message: "Incorrect verification code!",
       });
     }
 
-    delete otpStorage[normalizedEmail];
-
     let user = await User.findOne({ email: normalizedEmail });
-    const tempData = signupTempStorage[normalizedEmail] || {};
     let hashedPassword = null;
 
-    if (tempData.password) {
-      hashedPassword = await bcrypt.hash(tempData.password, 10);
+    if (otpRecord.password) {
+      hashedPassword = await bcrypt.hash(otpRecord.password, 10);
     }
 
     if (!user) {
       user = await User.create({
         email: normalizedEmail,
-        name: tempData.fullname || normalizedEmail.split("@")[0],
+        name: otpRecord.fullname || normalizedEmail.split("@")[0],
         password: hashedPassword,
       });
     } else {
       if (!user.password && hashedPassword) {
         user.password = hashedPassword;
-        if (tempData.fullname && (!user.name || user.name === normalizedEmail.split("@")[0])) {
-          user.name = tempData.fullname;
+        if (otpRecord.fullname && (!user.name || user.name === normalizedEmail.split("@")[0])) {
+          user.name = otpRecord.fullname;
         }
         await user.save();
       }
     }
 
-    delete signupTempStorage[normalizedEmail];
+    // Verification ke baad database se OTP delete kar do
+    await Otp.deleteMany({ email: normalizedEmail });
 
     return res.status(200).json({
       success: true,
@@ -238,7 +218,7 @@ exports.verifyOtp = async (req, res) => {
   }
 };
 
-//  LOGIN 
+// ================= LOGIN =================
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
