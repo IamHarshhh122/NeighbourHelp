@@ -11,6 +11,12 @@ import {
   HiOutlineChatAlt2,
   HiOutlineStar,
   HiOutlineCode,
+  HiOutlineDesktopComputer,
+  HiOutlineMap,
+  HiOutlineServer,
+  HiOutlineDatabase,
+  HiOutlineLockClosed,
+  HiOutlineCloudUpload,
 } from "react-icons/hi";
 import { FaGithub, FaLinkedin, FaInstagram } from "react-icons/fa";
 import { motion } from "framer-motion";
@@ -101,19 +107,116 @@ const values = [
   {
     icon: <HiOutlineGlobe />,
     title: "Hyper-local",
-    desc: "Everything happens within a 1-5 km radius. Real neighbours, real connections.",
+    desc: "Tasks are listed by distance from you, so you always see what is closest first. Real neighbours, real connections.",
   },
 ];
 
-const techStack = [
-  { name: "React", desc: "Frontend framework" },
-  { name: "Tailwind CSS", desc: "Design system" },
-  { name: "Node.js", desc: "Backend runtime" },
-  { name: "Express", desc: "API server" },
-  { name: "MongoDB", desc: "Database" },
-  { name: "Leaflet", desc: "Live maps & routing" },
-  { name: "OpenRouteService", desc: "Route calculation" },
-  { name: "Socket.IO", desc: "Real-time updates" },
+const techGroups = [
+  {
+    icon: <HiOutlineDesktopComputer />,
+    title: "Frontend",
+    subtitle: "What you see and tap",
+    items: [
+      { name: "React", desc: "Component-based UI library" },
+      { name: "Vite", desc: "Fast build tool and dev server" },
+      { name: "Tailwind CSS", desc: "Utility-first styling and responsive design" },
+      { name: "React Router", desc: "Client-side page navigation" },
+      { name: "Framer Motion", desc: "Smooth animations and transitions" },
+      { name: "React Hook Form", desc: "Form handling and validation" },
+      { name: "Axios & Fetch", desc: "Requests to the backend API" },
+      { name: "React Hot Toast", desc: "Instant feedback notifications" },
+      { name: "React Icons", desc: "Icon library" },
+    ],
+  },
+  {
+    icon: <HiOutlineMap />,
+    title: "Maps & Location",
+    subtitle: "Finding and reaching neighbours",
+    items: [
+      { name: "Leaflet & React-Leaflet", desc: "Interactive maps" },
+      { name: "OpenStreetMap", desc: "Free, open map tiles" },
+      { name: "Leaflet Routing Machine", desc: "Route drawing and turn-by-turn steps" },
+      { name: "OSRM", desc: "Open-source routing engine" },
+      { name: "Nominatim", desc: "Address search and geocoding" },
+      { name: "Geolocation API", desc: "Live position and distance tracking" },
+    ],
+  },
+  {
+    icon: <HiOutlineServer />,
+    title: "Backend",
+    subtitle: "The engine behind the app",
+    items: [
+      { name: "Node.js", desc: "JavaScript runtime on the server" },
+      { name: "Express", desc: "REST API framework" },
+      { name: "Mongoose", desc: "MongoDB data models and queries" },
+      { name: "CORS", desc: "Only trusted origins can call the API" },
+      { name: "express-session", desc: "Session handling during sign-in" },
+      { name: "dotenv", desc: "Secrets kept out of the source code" },
+    ],
+  },
+  {
+    icon: <HiOutlineDatabase />,
+    title: "Database",
+    subtitle: "Where everything is stored",
+    items: [
+      { name: "MongoDB Atlas", desc: "Managed cloud database" },
+      { name: "Users", desc: "Profiles, credits and home location" },
+      { name: "Tasks", desc: "Requests, status, proofs and rewards" },
+    ],
+  },
+  {
+    icon: <HiOutlineLockClosed />,
+    title: "Authentication & Security",
+    subtitle: "Keeping accounts safe",
+    items: [
+      { name: "Google OAuth 2.0", desc: "One-tap sign in with Google" },
+      { name: "Passport.js", desc: "Authentication middleware" },
+      { name: "Email OTP", desc: "Verification codes sent with Nodemailer" },
+      { name: "bcrypt", desc: "Passwords are hashed, never stored as plain text" },
+      { name: "Secure cookies", desc: "HttpOnly, SameSite and Secure flags in production" },
+      { name: "HTTPS", desc: "All traffic is encrypted end to end" },
+    ],
+  },
+  {
+    icon: <HiOutlineCloudUpload />,
+    title: "Deployment & DevOps",
+    subtitle: "How it reaches the internet",
+    items: [
+      { name: "GitHub", desc: "Source control; every push triggers a deploy" },
+      { name: "Vercel", desc: "Frontend hosting on a global CDN" },
+      { name: "Render", desc: "Backend web service hosting" },
+      { name: "Google Cloud Console", desc: "OAuth credentials and redirect settings" },
+      { name: "Environment variables", desc: "Separate configuration for each service" },
+    ],
+  },
+];
+
+const architecture = [
+  {
+    title: "Browser",
+    desc: "You open NeighbourHelp on your phone or computer.",
+  },
+  {
+    title: "Vercel",
+    desc: "Delivers the React app instantly from the nearest edge location.",
+  },
+  {
+    title: "Render",
+    desc: "Runs the Express API for sign-in, tasks, rewards and email codes.",
+  },
+  {
+    title: "MongoDB Atlas",
+    desc: "Stores users, tasks and credits securely in the cloud.",
+  },
+];
+
+const googleFlow = [
+  "You tap Continue with Google on the website hosted on Vercel.",
+  "The browser goes to the Render API, which redirects you to Google.",
+  "You choose your account and approve access to your name and email.",
+  "Google sends you back to the Render callback with a one-time code.",
+  "The API verifies it, then finds or creates your account in MongoDB.",
+  "You are redirected to the website, signed in and ready to help.",
 ];
 
 export default function About() {
@@ -280,22 +383,100 @@ export default function About() {
                 Built with
               </span>
             </div>
-            <h2 className="text-3xl font-bold text-white mb-3">The tech behind it</h2>
-            <p className="text-sm text-slate-400 max-w-lg mx-auto">
-              Modern, fast, and open. Powered by real-time maps and a robust backend.
+            <h2 className="text-3xl font-bold text-white mb-3">The tech behind it, from A to Z</h2>
+            <p className="text-sm text-slate-400 max-w-xl mx-auto">
+              From the screen you tap to the servers that answer, here is every tool that powers
+              NeighbourHelp.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {techStack.map((tech, i) => (
-              <div
-                key={i}
-                className="p-4 rounded-2xl border border-white/[0.06] bg-white/[0.02] text-center hover:border-emerald-500/20 transition"
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {techGroups.map((group, i) => (
+              <motion.div
+                key={group.title}
+                initial={{ opacity: 0, y: 10 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.05 }}
+                className="p-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] hover:border-emerald-500/20 transition flex flex-col"
               >
-                <p className="text-sm font-bold text-white mb-0.5">{tech.name}</p>
-                <p className="text-[11px] text-slate-500">{tech.desc}</p>
-              </div>
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-11 h-11 rounded-xl bg-emerald-500/[0.12] border border-emerald-500/25 flex items-center justify-center text-emerald-400 text-xl shrink-0">
+                    {group.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-base font-bold text-white leading-tight">{group.title}</h3>
+                    <p className="text-[11px] text-slate-500">{group.subtitle}</p>
+                  </div>
+                </div>
+
+                <ul className="space-y-3">
+                  {group.items.map((item) => (
+                    <li key={item.name} className="flex items-start gap-2.5">
+                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-400/80 shrink-0" />
+                      <p className="text-sm leading-snug">
+                        <span className="font-semibold text-white">{item.name}</span>
+                        <span className="text-slate-400"> — {item.desc}</span>
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
             ))}
+          </div>
+        </section>
+
+        {/* ─────── HOW IT ALL CONNECTS ─────── */}
+        <section className="mb-16">
+          <div className="text-center mb-10">
+            <h2 className="text-3xl font-bold text-white mb-3">How it all connects</h2>
+            <p className="text-sm text-slate-400 max-w-lg mx-auto">
+              Every tap travels through four layers before you see the result.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {architecture.map((node, i) => (
+              <motion.div
+                key={node.title}
+                initial={{ opacity: 0, y: 10 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.07 }}
+                className="relative p-5 rounded-2xl border border-white/[0.06] bg-white/[0.02] text-center"
+              >
+                <span className="inline-flex w-8 h-8 rounded-full bg-emerald-500/[0.12] border border-emerald-500/25 text-emerald-400 text-xs font-bold items-center justify-center mb-3">
+                  {i + 1}
+                </span>
+                <h3 className="text-base font-bold text-white mb-1.5">{node.title}</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">{node.desc}</p>
+                {i < architecture.length - 1 && (
+                  <span className="hidden lg:block absolute top-1/2 -right-3.5 -translate-y-1/2 text-emerald-500/60 text-lg z-10">
+                    →
+                  </span>
+                )}
+              </motion.div>
+            ))}
+          </div>
+
+          <div className="mt-6 rounded-3xl border border-emerald-500/[0.15] bg-gradient-to-br from-emerald-900/[0.12] via-[#0d1218] to-[#0d1218] p-6 sm:p-8">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/[0.12] border border-emerald-500/25 flex items-center justify-center">
+                <HiOutlineLockClosed className="text-emerald-400 text-xl" />
+              </div>
+              <h3 className="text-xl font-bold text-white">Signing in with Google, step by step</h3>
+            </div>
+
+            <ol className="space-y-3">
+              {googleFlow.map((text, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-emerald-500/[0.15] border border-emerald-500/25 text-emerald-300 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                    {i + 1}
+                  </span>
+                  <p className="text-sm text-slate-300 leading-relaxed">{text}</p>
+                </li>
+              ))}
+            </ol>
           </div>
         </section>
 
@@ -347,6 +528,7 @@ export default function About() {
                         href={member.socials.github}
                         target="_blank"
                         rel="noreferrer"
+                        aria-label={`${member.name} on GitHub`}
                         className="w-8 h-8 rounded-lg bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-400 hover:text-white hover:border-white/20 transition"
                       >
                         <FaGithub className="text-sm" />
@@ -357,6 +539,7 @@ export default function About() {
                         href={member.socials.linkedin}
                         target="_blank"
                         rel="noreferrer"
+                        aria-label={`${member.name} on LinkedIn`}
                         className="w-8 h-8 rounded-lg bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-400 hover:text-blue-400 hover:border-blue-400/40 transition"
                       >
                         <FaLinkedin className="text-sm" />
@@ -367,6 +550,7 @@ export default function About() {
                         href={member.socials.instagram}
                         target="_blank"
                         rel="noreferrer"
+                        aria-label={`${member.name} on Instagram`}
                         className="w-8 h-8 rounded-lg bg-white/[0.03] border border-white/[0.08] flex items-center justify-center text-slate-400 hover:text-pink-400 hover:border-pink-400/40 transition"
                       >
                         <FaInstagram className="text-sm" />
