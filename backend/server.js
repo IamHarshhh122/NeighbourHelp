@@ -20,6 +20,7 @@ app.use(express.json());
 const allowedOrigins = [
   "http://localhost:5173",
   "https://neighbour-help-sandy.vercel.app",
+  "https://neighbour-help-mln9.vercel.app",
   process.env.CLIENT_URL,
 ].filter(Boolean);
 
