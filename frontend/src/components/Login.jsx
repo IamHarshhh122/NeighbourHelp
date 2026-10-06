@@ -1,4 +1,3 @@
-const BACKEND_URL = "https://neighbourhelp-baaa.onrender.com";
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -13,6 +12,10 @@ import {
 } from "react-icons/hi";
 import { FcGoogle } from "react-icons/fc";
 
+// Active live backend domain
+const BACKEND_URL =
+  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com";
+
 const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,7 +27,7 @@ const Login = () => {
   const navigate = useNavigate();
 
   const googleLogin = () => {
-    window.location.href = "http://localhost:5000/api/google";
+    window.location.href = `${BACKEND_URL}/api/google`;
   };
 
   const handlePasswordLogin = async (e) => {
@@ -39,7 +42,7 @@ const Login = () => {
 
     try {
       const res = await axios.post(
-        "http://localhost:5000/api/login",
+        `${BACKEND_URL}/api/login`,
         {
           email: email.trim().toLowerCase(),
           password,
@@ -50,15 +53,13 @@ const Login = () => {
       if (res.data.success) {
         toast.success("Welcome back, neighbour! 👋🏠");
         localStorage.setItem("Users", JSON.stringify(res.data.user));
-        navigate("/"); // Yahan dashboard se badal kar "/" kar diya hai
+        navigate("/");
       } else {
         toast.error(res.data.message || "Login failed!");
       }
     } catch (err) {
       console.error(err);
-      toast.error(
-        err.response?.data?.message || "Unable to login!"
-      );
+      toast.error(err.response?.data?.message || "Unable to login!");
     } finally {
       setIsLoading(false);
     }
@@ -73,10 +74,9 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      const res = await axios.post(
-        "http://localhost:5000/api/send-otp",
-        { email: email.trim().toLowerCase() }
-      );
+      const res = await axios.post(`${BACKEND_URL}/api/send-otp`, {
+        email: email.trim().toLowerCase(),
+      });
 
       if (res.data.success) {
         toast.success("Your verification code is on its way! 📩");
@@ -85,9 +85,7 @@ const Login = () => {
         toast.error(res.data.message || "Failed to send OTP.");
       }
     } catch (err) {
-      toast.error(
-        err.response?.data?.message || "Failed to send OTP."
-      );
+      toast.error(err.response?.data?.message || "Failed to send OTP.");
     } finally {
       setIsLoading(false);
     }
@@ -104,25 +102,20 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      const res = await axios.post(
-        "http://localhost:5000/api/verify-otp",
-        {
-          email: email.trim().toLowerCase(),
-          otp,
-        }
-      );
+      const res = await axios.post(`${BACKEND_URL}/api/verify-otp`, {
+        email: email.trim().toLowerCase(),
+        otp,
+      });
 
       if (res.data.success) {
         toast.success("Welcome back, neighbour! 👋🏠");
         localStorage.setItem("Users", JSON.stringify(res.data.user));
-        navigate("/"); // Yahan bhi dashboard se badal kar "/" kar diya hai
+        navigate("/");
       } else {
         toast.error(res.data.message || "Verification failed!");
       }
     } catch (err) {
-      toast.error(
-        err.response?.data?.message || "Invalid or expired OTP!"
-      );
+      toast.error(err.response?.data?.message || "Invalid or expired OTP!");
     } finally {
       setIsLoading(false);
     }
@@ -172,8 +165,8 @@ const Login = () => {
             </h2>
 
             <p className="mt-4 text-slate-300 text-sm leading-relaxed max-w-sm">
-              Connect with your neighbors, check active requests,
-              and keep your neighborhood connected.
+              Connect with your neighbors, check active requests, and keep your
+              neighborhood connected.
             </p>
 
             <div className="grid grid-cols-2 gap-3 mt-7">
@@ -344,9 +337,7 @@ const Login = () => {
                     inputMode="numeric"
                     value={otp}
                     onChange={(e) =>
-                      setOtp(
-                        e.target.value.replace(/\D/g, "").slice(0, 6)
-                      )
+                      setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
                     }
                     maxLength={6}
                     placeholder="000000"

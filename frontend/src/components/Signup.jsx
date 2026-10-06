@@ -13,6 +13,9 @@ import {
 } from "react-icons/hi";
 import { FcGoogle } from "react-icons/fc";
 
+const BACKEND_URL =
+  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com";
+
 const Signup = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -39,14 +42,11 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      const res = await fetch(
-        "http://localhost:5000/api/send-otp",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, fullname, password }),
-        }
-      );
+      const res = await fetch(`${BACKEND_URL}/api/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, fullname, password }),
+      });
 
       const data = await res.json();
 
@@ -75,14 +75,11 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      const res = await fetch(
-        "http://localhost:5000/api/verify-otp",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...data, otp }),
-        }
-      );
+      const res = await fetch(`${BACKEND_URL}/api/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...data, otp }),
+      });
 
       const result = await res.json();
 
@@ -91,7 +88,7 @@ const Signup = () => {
         localStorage.setItem("Users", JSON.stringify(result.user));
 
         setTimeout(() => {
-          navigate("/"); // Yahan bhi dashboard se badal kar "/" kar diya hai
+          navigate("/");
           window.location.reload();
         }, 1000);
       } else {
@@ -106,7 +103,7 @@ const Signup = () => {
   };
 
   const googleLogin = () => {
-    window.location.href = "http://localhost:5000/api/google";
+    window.location.href = `${BACKEND_URL}/api/google`;
   };
 
   return (
