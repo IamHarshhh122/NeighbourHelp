@@ -1,10 +1,11 @@
 const User = require("../model/User");
 const bcrypt = require("bcryptjs");
 
+// In-memory OTP storage
 const otpStorage = {};
 const signupTempStorage = {};
 
-const normalizeEmail = (email) => (email ? email.toLowerCase().trim() : "");
+const normalizeEmail = (email) => (email ? String(email).toLowerCase().trim() : "");
 
 const formatUser = (user) => ({
   _id: user._id,
@@ -18,7 +19,7 @@ const formatUser = (user) => ({
   homeLng: user.homeLng ?? null,
 });
 
-// SEND OTP 
+//SEND OTP 
 exports.sendOtp = async (req, res) => {
   try {
     const { email, fullname, password } = req.body;
@@ -33,34 +34,84 @@ exports.sendOtp = async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
+    // 10 minute expiry window
     otpStorage[normalizedEmail] = {
       code: otp,
-      expiresAt: Date.now() + 5 * 60 * 1000,
+      expiresAt: Date.now() + 10 * 60 * 1000,
     };
 
     if (fullname && password) {
       signupTempStorage[normalizedEmail] = { fullname, password };
     }
 
+    console.log(`[OTP Generated] Email: ${normalizedEmail} | OTP: ${otp}`);
+
+    // Sleek Dark Theme HTML Template
     const emailHtml = `
 <!DOCTYPE html>
-<html>
-<body style="margin:0;padding:20px;background:#f1f5f9;font-family:Arial">
-  <div style="max-width:480px;margin:auto;background:white;padding:25px;border-radius:16px;text-align:center">
-    <h2 style="color:#0f172a">Neighbour<span style="color:#2563eb">Help</span></h2>
-    <h3>Verify your email</h3>
-    <p style="color:#64748b">Use the verification code below.</p>
-    <div style="padding:20px;background:#eff6ff;border-radius:12px">
-      <div style="font-size:11px;color:#64748b">VERIFICATION CODE</div>
-      <div style="font-size:30px;font-weight:bold;color:#2563eb;letter-spacing:6px">${otp}</div>
-    </div>
-    <p style="color:#64748b;font-size:12px">This code expires in 5 minutes.</p>
-  </div>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeighbourHelp Verification</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0b0f19; padding: 40px 15px;">
+    <tr>
+      <td align="center">
+        <!-- Main Card -->
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 480px; background-color: #111827; border: 1px solid #1f2937; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);">
+          
+          <!-- Header Bar -->
+          <tr>
+            <td style="padding: 35px 35px 20px 35px; text-align: center; border-bottom: 1px solid #1f2937;">
+              <div style="display: inline-block; padding: 8px 18px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 50px; margin-bottom: 12px;">
+                <span style="color: #60a5fa; font-size: 13px; font-weight: 600; letter-spacing: 0.5px;">COMMUNITY NETWORK</span>
+              </div>
+              <h1 style="margin: 0; font-size: 26px; font-weight: 800; color: #f9fafb; letter-spacing: -0.5px;">
+                Neighbour<span style="color: #38bdf8;">Help</span>
+              </h1>
+            </td>
+          </tr>
+
+          <!-- Content Body -->
+          <tr>
+            <td style="padding: 30px 35px 20px 35px; text-align: center;">
+              <h2 style="margin: 0 0 10px 0; font-size: 20px; font-weight: 700; color: #f3f4f6;">Verify Your Account</h2>
+              <p style="margin: 0; font-size: 14px; line-height: 22px; color: #9ca3af;">
+                Welcome to NeighbourHelp! Use the 6-digit verification code below to complete your registration.
+              </p>
+              
+              <!-- OTP Box -->
+              <div style="margin: 28px 0; padding: 22px 15px; background: #0f172a; border: 1px dashed #38bdf8; border-radius: 14px;">
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px;">ONE-TIME PASSWORD</div>
+                <div style="font-size: 36px; font-weight: 800; color: #38bdf8; letter-spacing: 8px; font-family: 'Courier New', monospace;">${otp}</div>
+              </div>
+
+              <p style="margin: 0; font-size: 12px; color: #6b7280;">
+                ⏱ This code will expire in <strong style="color: #9ca3af;">10 minutes</strong>.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 20px 35px 30px 35px; text-align: center; border-top: 1px solid #1f2937;">
+              <p style="margin: 0; font-size: 11px; color: #4b5563; line-height: 18px;">
+                If you did not request this code, you can safely ignore this email.<br>
+                &copy; 2026 NeighbourHelp Platform. All rights reserved.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>
     `;
 
-    // Direct REST API Call (Zero dependency, 100% reliable)
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
       headers: {
@@ -74,7 +125,7 @@ exports.sendOtp = async (req, res) => {
           email: process.env.EMAIL_USER,
         },
         to: [{ email: normalizedEmail }],
-        subject: `${otp} is your NeighbourHelp verification code`,
+        subject: `Your NeighbourHelp Verification Code is ${otp}`,
         htmlContent: emailHtml,
       }),
     });
@@ -82,7 +133,7 @@ exports.sendOtp = async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("Brevo API Response Error:", data);
+      console.error("Brevo API Error:", data);
       return res.status(500).json({
         success: false,
         message: "Failed to send verification email via provider!",
@@ -104,7 +155,7 @@ exports.sendOtp = async (req, res) => {
   }
 };
 
-// VERIFY OTP 
+//  VERIFY OTP 
 exports.verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -117,7 +168,11 @@ exports.verifyOtp = async (req, res) => {
     }
 
     const normalizedEmail = normalizeEmail(email);
+    const cleanOtp = String(otp).trim();
     const storedOtp = otpStorage[normalizedEmail];
+
+    console.log(`[Verify Attempt] Email: ${normalizedEmail} | Entered OTP: ${cleanOtp}`);
+    console.log(`[Stored Record]`, storedOtp);
 
     if (!storedOtp) {
       return res.status(400).json({
@@ -134,7 +189,7 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
-    if (storedOtp.code !== String(otp).trim()) {
+    if (storedOtp.code !== cleanOtp) {
       return res.status(400).json({
         success: false,
         message: "Incorrect verification code!",
@@ -183,7 +238,7 @@ exports.verifyOtp = async (req, res) => {
   }
 };
 
-// LOGIN 
+//  LOGIN 
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -235,7 +290,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// SAVE HOME LOCATION 
+// ================= SAVE HOME LOCATION =================
 exports.saveHomeLocation = async (req, res) => {
   try {
     const { email, homeAddress, homeLat, homeLng } = req.body;
