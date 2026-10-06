@@ -114,12 +114,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ================= HERO CONTENT WITH FLOATING BADGES ================= */}
       <main className="relative z-10">
         <section className="relative max-w-[1400px] mx-auto min-h-[580px] flex flex-col items-center justify-center px-4 pt-16 pb-8 text-center">
-
-          {/* ================= 4 CORNER FLOATING NEIGHBOUR SIGNALS ================= */}
-
           {/* TOP LEFT: Heavy Lifting / Errand */}
           <div className="hidden xl:flex absolute top-12 left-8 items-center gap-3 animate-float-y">
             <div className="relative w-12 h-12 rounded-2xl bg-slate-900/80 border border-amber-400/40 backdrop-blur-md flex items-center justify-center shadow-lg">

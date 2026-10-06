@@ -18,6 +18,19 @@ const signupTempStorage = {};
 // Helper: Normalize email
 const normalizeEmail = (email) => (email ? email.toLowerCase().trim() : "");
 
+// Helper: One user shape for every auth flow (password, OTP, Google)
+const formatUser = (user) => ({
+  _id: user._id,
+  id: user._id,
+  fullname: user.name,
+  name: user.name,
+  email: user.email,
+  points: user.points ?? 20,
+  homeAddress: user.homeAddress || "",
+  homeLat: user.homeLat ?? null,
+  homeLng: user.homeLng ?? null,
+});
+
 // ================= SEND OTP =================
 exports.sendOtp = async (req, res) => {
   try {
@@ -110,7 +123,7 @@ exports.verifyOtp = async (req, res) => {
       });
     }
 
-    if (storedOtp.code !== otp) {
+    if (storedOtp.code !== String(otp).trim()) {
       return res.status(400).json({
         success: false,
         message: "Incorrect verification code!",
@@ -148,14 +161,7 @@ exports.verifyOtp = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Email verified successfully!",
-      user: {
-        id: user._id,
-        fullname: user.name,
-        email: user.email,
-        homeAddress: user.homeAddress || "",
-        homeLat: user.homeLat || null,
-        homeLng: user.homeLng || null,
-      },
+      user: formatUser(user),
     });
   } catch (error) {
     console.error("Verify OTP Error:", error);
@@ -207,14 +213,7 @@ exports.login = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Login successful!",
-      user: {
-        id: user._id,
-        fullname: user.name,
-        email: user.email,
-        homeAddress: user.homeAddress || "",
-        homeLat: user.homeLat || null,
-        homeLng: user.homeLng || null,
-      },
+      user: formatUser(user),
     });
   } catch (error) {
     console.error("Login Error:", error);
@@ -255,14 +254,7 @@ exports.saveHomeLocation = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Home location saved successfully!",
-      user: {
-        id: updatedUser._id,
-        fullname: updatedUser.name,
-        email: updatedUser.email,
-        homeAddress: updatedUser.homeAddress || "",
-        homeLat: updatedUser.homeLat || null,
-        homeLng: updatedUser.homeLng || null,
-      },
+      user: formatUser(updatedUser),
     });
   } catch (error) {
     console.error("Save Home Location Error:", error);

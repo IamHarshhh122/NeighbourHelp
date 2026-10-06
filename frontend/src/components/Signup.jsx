@@ -13,13 +13,20 @@ import {
 } from "react-icons/hi";
 import { FcGoogle } from "react-icons/fc";
 
-const BACKEND_URL =
-  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com";
+// Single source of truth for the API base URL.
+// Set VITE_API_URL in Vercel env vars; falls back to the live Render backend.
+// Trailing slashes are stripped so `${BACKEND_URL}/api/...` is always clean.
+const BACKEND_URL = (
+  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com"
+)
+  .trim()
+  .replace(/\/+$/, "");
 
 const Signup = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
   const {
@@ -30,12 +37,17 @@ const Signup = () => {
   } = useForm();
 
   const sendOtp = async () => {
-    const email = getValues("email");
-    const fullname = getValues("fullname");
+    const email = getValues("email")?.trim().toLowerCase();
+    const fullname = getValues("fullname")?.trim();
     const password = getValues("password");
 
     if (!email || !fullname || !password) {
       toast.error("Please fill in Name, Email and Password first!");
+      return;
+    }
+
+    if (password.length < 6) {
+      toast.error("Password must be at least 6 characters!");
       return;
     }
 
@@ -45,6 +57,7 @@ const Signup = () => {
       const res = await fetch(`${BACKEND_URL}/api/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email, fullname, password }),
       });
 
@@ -65,10 +78,8 @@ const Signup = () => {
   };
 
   const onSubmit = async (data) => {
-    const otp = document.getElementById("otp")?.value;
-
-    if (!otpSent || !otp) {
-      toast.error("Please verify your email first!");
+    if (!otpSent || otp.length !== 6) {
+      toast.error("Please enter the 6-digit verification code!");
       return;
     }
 
@@ -78,7 +89,13 @@ const Signup = () => {
       const res = await fetch(`${BACKEND_URL}/api/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, otp }),
+        credentials: "include",
+        body: JSON.stringify({
+          ...data,
+          email: data.email.trim().toLowerCase(),
+          fullname: data.fullname.trim(),
+          otp,
+        }),
       });
 
       const result = await res.json();
@@ -102,6 +119,8 @@ const Signup = () => {
     }
   };
 
+  // Full-page redirect to backend: GET <BACKEND_URL>/api/google
+  // Backend callback then redirects to <CLIENT_URL>/oauth-success?user=<encoded_json>
   const googleLogin = () => {
     window.location.href = `${BACKEND_URL}/api/google`;
   };
@@ -257,15 +276,14 @@ const Signup = () => {
 
                 <input
                   type="text"
-                  id="otp"
                   inputMode="numeric"
+                  autoComplete="one-time-code"
                   maxLength={6}
                   placeholder="000000"
-                  onInput={(e) => {
-                    e.target.value = e.target.value
-                      .replace(/\D/g, "")
-                      .slice(0, 6);
-                  }}
+                  value={otp}
+                  onChange={(e) =>
+                    setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
+                  }
                   className="w-full h-12 rounded-lg bg-slate-950 border border-emerald-500/30 text-center text-lg font-black tracking-[7px] outline-none focus:border-emerald-400"
                   required
                 />

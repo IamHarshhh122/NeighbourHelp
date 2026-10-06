@@ -11,37 +11,65 @@ const User = require("./model/User");
 const authRoutes = require("./routes/authRoutes");
 const taskRoutes = require("./routes/taskRoutes");
 
+const stripSlash = (url) => (url || "").trim().replace(/\/+$/, "");
+
+const isProduction =
+  process.env.NODE_ENV === "production" || !!process.env.RENDER;
+
+const CLIENT_URL = stripSlash(
+  process.env.CLIENT_URL || "https://neighbour-help-mln9.vercel.app"
+);
+const BACKEND_URL = stripSlash(
+  process.env.BACKEND_URL || "https://neighbourhelp-backend.onrender.com"
+);
+
+// Fail fast on missing critical config
+const required = [
+  "MONGO_URI",
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  ...(isProduction ? ["SESSION_SECRET"] : []),
+];
+const missing = required.filter((key) => !process.env[key]);
+if (missing.length) {
+  console.error(`Missing required environment variables: ${missing.join(", ")}`);
+  process.exit(1);
+}
+
 const app = express();
 app.set("trust proxy", 1);
 
 app.use(express.json());
 
-// Dynamic Allowed Origins (Localhost + Live Vercel)
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://neighbour-help-sandy.vercel.app",
-  "https://neighbour-help-mln9.vercel.app",
-  process.env.CLIENT_URL,
-].filter(Boolean);
+// ---------- CORS ----------
+// Extra origins (e.g. preview/staging) can be supplied as a comma-separated
+// list in CORS_ORIGINS.
+const extraOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map(stripSlash)
+  .filter(Boolean);
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(null, true); 
-      }
-    },
-    credentials: true,
-  })
-);
+const allowedOrigins = [...new Set([CLIENT_URL, ...extraOrigins])];
 
-const isProduction = process.env.NODE_ENV === "production" || !!process.env.RENDER;
+const corsOptions = {
+  origin(origin, callback) {
+    // Allow non-browser requests (curl, health checks, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(stripSlash(origin))) return callback(null, true);
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
 
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
+// ---------- Session ----------
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "neighbourhelp@7140",
+    secret: process.env.SESSION_SECRET || "dev-only-session-secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -56,15 +84,17 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Google Strategy with Dynamic Callback URL
-const backendBaseUrl = process.env.BACKEND_URL || "https://neighbourhelp-backend.onrender.com";
-
+// ---------- Passport Google Strategy ----------
+// This callbackURL must be listed EXACTLY under "Authorized redirect URIs"
+// in Google Cloud Console:
+//   https://neighbourhelp-backend.onrender.com/api/google/callback
 passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: `${backendBaseUrl}/api/google/callback`,
+      callbackURL: `${BACKEND_URL}/api/google/callback`,
+      proxy: true,
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -111,16 +141,13 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
+// ---------- Database ----------
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log("MongoDB Connected Successfully!");
-  })
-  .catch((error) => {
-    console.log("MongoDB Connection Error:", error.message);
-  });
+  .then(() => console.log("MongoDB Connected Successfully!"))
+  .catch((error) => console.error("MongoDB Connection Error:", error.message));
 
-// Routes
+// ---------- Routes ----------
 app.use("/api", authRoutes);
 app.use("/api", taskRoutes);
 
@@ -131,8 +158,15 @@ app.get("/", (req, res) => {
   });
 });
 
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err.message);
+  const status = err.message?.startsWith("CORS blocked") ? 403 : 500;
+  res.status(status).json({ success: false, message: err.message });
+});
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(`Allowed CORS origins: ${allowedOrigins.join(", ")}`);
 });

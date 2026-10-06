@@ -12,9 +12,14 @@ import {
 } from "react-icons/hi";
 import { FcGoogle } from "react-icons/fc";
 
-// Active live backend domain
-const BACKEND_URL =
-  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com";
+// Single source of truth for the API base URL.
+// Set VITE_API_URL in Vercel env vars; falls back to the live Render backend.
+// Trailing slashes are stripped so `${BACKEND_URL}/api/...` is always clean.
+const BACKEND_URL = (
+  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com"
+)
+  .trim()
+  .replace(/\/+$/, "");
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -26,6 +31,8 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
+  // Full-page redirect to backend: GET <BACKEND_URL>/api/google
+  // Backend callback then redirects to <CLIENT_URL>/oauth-success?user=<encoded_json>
   const googleLogin = () => {
     window.location.href = `${BACKEND_URL}/api/google`;
   };
@@ -47,7 +54,7 @@ const Login = () => {
           email: email.trim().toLowerCase(),
           password,
         },
-        { withCredentials: true, timeout: 10000 }
+        { withCredentials: true, timeout: 30000 } // Render free tier cold starts can be slow
       );
 
       if (res.data.success) {
@@ -74,9 +81,11 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      const res = await axios.post(`${BACKEND_URL}/api/send-otp`, {
-        email: email.trim().toLowerCase(),
-      });
+      const res = await axios.post(
+        `${BACKEND_URL}/api/send-otp`,
+        { email: email.trim().toLowerCase() },
+        { withCredentials: true, timeout: 30000 }
+      );
 
       if (res.data.success) {
         toast.success("Your verification code is on its way! 📩");
@@ -102,10 +111,11 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      const res = await axios.post(`${BACKEND_URL}/api/verify-otp`, {
-        email: email.trim().toLowerCase(),
-        otp,
-      });
+      const res = await axios.post(
+        `${BACKEND_URL}/api/verify-otp`,
+        { email: email.trim().toLowerCase(), otp },
+        { withCredentials: true, timeout: 30000 }
+      );
 
       if (res.data.success) {
         toast.success("Welcome back, neighbour! 👋🏠");

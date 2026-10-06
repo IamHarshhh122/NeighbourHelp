@@ -16,7 +16,13 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-const API = "http://localhost:5000/api";
+const BACKEND_URL = (
+  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com"
+)
+  .trim()
+  .replace(/\/+$/, "");
+
+const API = `${BACKEND_URL}/api`;
 
 /* REWARD CALCULATION*/
 const CATEGORY_BONUS = {
@@ -685,7 +691,7 @@ export default function Microtask() {
       return toast.error("All fields are required");
     }
     let finalLoc = taskLocation;
-    if (!finalLoc || address.trim()) {
+    if (!finalLoc) {
       finalLoc = await handleAddressSearch(address.trim());
     }
     if (!finalLoc) return toast.error("Please enter a valid address");
@@ -1060,7 +1066,10 @@ export default function Microtask() {
                 <div className="flex gap-2">
                   <input
                     value={address}
-                    onChange={(e) => setAddress(e.target.value)}
+                    onChange={(e) => {
+                      setAddress(e.target.value);
+                      setTaskLocation(null);
+                    }}
                     placeholder="Where should it be done? (address)"
                     className={`${inputCls} flex-1`}
                   />
