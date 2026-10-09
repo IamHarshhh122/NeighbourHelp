@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+
+import React, { useState, useEffect, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   HiOutlineMail,
   HiOutlineArrowLeft,
@@ -11,299 +12,691 @@ import {
   HiOutlineCamera,
   HiOutlineShieldCheck,
   HiOutlineStar,
-} from 'react-icons/hi';
-import { motion, AnimatePresence } from 'framer-motion';
-import { toast } from 'react-hot-toast';
+} from "react-icons/hi";
+import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "react-hot-toast";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  useMap,
+  useMapEvents,
+} from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
 
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
+  iconUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
+  shadowUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+});
 
 const BACKEND_URL =
-  import.meta.env.VITE_API_URL || "https://neighbourhelp-backend.onrender.com";
+  import.meta.env.VITE_API_URL ||
+  "https://neighbourhelp-backend.onrender.com";
 const API = `${BACKEND_URL}/api`;
+const NOMINATIM = "https://nominatim.openstreetmap.org";
 
-export default function Profile() {
-  const [user, setUser] = useState(null);
-  const [skillInput, setSkillInput] = useState('');
-  const [skills, setSkills] = useState(['Parcel Receiving', 'Bank Errands', 'General Help']);
-  const [profilePic, setProfilePic] = useState('');
-  const navigate = useNavigate();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const [homeAddressInput, setHomeAddressInput] = useState('');
-  const [homeCoords, setHomeCoords] = useState(null);
-  const [geocodingHome, setGeocodingHome] = useState(false);
-  const [savingHome, setSavingHome] = useState(false);
+async function searchPlaces(address, near) {
+  const clean = address.trim().replace(/\s+/g, " ");
+  const parts = clean.split(",").map((part) => part.trim()).filter(Boolean);
 
-  const getInitials = (name) => (name ? name.charAt(0).toUpperCase() : "U");
+  const queries = [
+    clean,
+    parts.slice(1).join(", "),
+    parts.slice(-3).join(", "),
+    parts.slice(-2).join(", "),
+  ].filter((query, index, arr) => query && arr.indexOf(query) === index);
+
+  for (const query of queries) {
+    try {
+      const params = new URLSearchParams({
+        format: "jsonv2",
+        addressdetails: "1",
+        limit: "5",
+        countrycodes: "in",
+        q: query,
+      });
+
+      if (near) {
+        const distance = 0.15;
+        params.set(
+          "viewbox",
+          `${near.lng - distance},${near.lat + distance},${near.lng + distance},${near.lat - distance}`
+        );
+      }
+
+      const response = await fetch(
+        `${NOMINATIM}/search?${params.toString()}`
+      );
+
+      if (!response.ok) continue;
+
+      const results = await response.json();
+
+      if (results.length) {
+        return results.map((item) => ({
+          lat: Number(item.lat),
+          lng: Number(item.lon),
+          label: item.display_name,
+        }));
+      }
+
+      await sleep(1100);
+    } catch (error) {
+      console.error("Address search error:", error);
+    }
+  }
+
+  return [];
+}
+
+async function reverseGeocode(lat, lng) {
+  try {
+    const params = new URLSearchParams({
+      format: "jsonv2",
+      lat: String(lat),
+      lon: String(lng),
+      zoom: "18",
+      addressdetails: "1",
+    });
+
+    const response = await fetch(
+      `${NOMINATIM}/reverse?${params.toString()}`
+    );
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return data?.display_name || null;
+  } catch (error) {
+    console.error("Reverse geocoding error:", error);
+    return null;
+  }
+}
+
+function PinClickHandler({ onPick }) {
+  useMapEvents({
+    click(event) {
+      onPick({
+        lat: event.latlng.lat,
+        lng: event.latlng.lng,
+      });
+    },
+  });
+
+  return null;
+}
+
+function PinRecenter({ focus }) {
+  const map = useMap();
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("Users");
-    if (!storedUser) { navigate("/login"); return; }
-    const parsedUser = JSON.parse(storedUser);
-    if (parsedUser.points === undefined) parsedUser.points = 20;
-    setUser(parsedUser);
-    if (parsedUser.profilePic) setProfilePic(parsedUser.profilePic);
-    if (parsedUser.skills) setSkills(parsedUser.skills);
-    if (parsedUser.homeAddress) setHomeAddressInput(parsedUser.homeAddress);
-    if (parsedUser.homeLat != null && parsedUser.homeLng != null) {
-      setHomeCoords({ lat: Number(parsedUser.homeLat), lng: Number(parsedUser.homeLng) });
+    if (focus) {
+      map.setView([focus.lat, focus.lng], 17);
+    }
+  }, [map, focus]);
+
+  return null;
+}
+
+function PinPicker({ focus, fallback, position, onPick }) {
+  const markerRef = useRef(null);
+  const initial = focus || position || fallback || {
+    lat: 28.6725,
+    lng: 77.4355,
+  };
+
+  return (
+    <MapContainer
+      center={[initial.lat, initial.lng]}
+      zoom={focus || position || fallback ? 16 : 5}
+      style={{ width: "100%", height: "100%" }}
+    >
+      <TileLayer
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+
+      <PinClickHandler onPick={onPick} />
+      <PinRecenter focus={focus} />
+
+      {position && (
+        <Marker
+          draggable
+          position={[position.lat, position.lng]}
+          ref={markerRef}
+          eventHandlers={{
+            dragend() {
+              const marker = markerRef.current;
+              if (!marker) return;
+
+              const point = marker.getLatLng();
+              onPick({ lat: point.lat, lng: point.lng });
+            },
+          }}
+        />
+      )}
+    </MapContainer>
+  );
+}
+
+export default function Profile() {
+  const navigate = useNavigate();
+
+  const [user, setUser] = useState(null);
+  const [skillInput, setSkillInput] = useState("");
+  const [skills, setSkills] = useState([
+    "Parcel Receiving",
+    "Bank Errands",
+    "General Help",
+  ]);
+  const [profilePic, setProfilePic] = useState("");
+
+  const [homeAddressInput, setHomeAddressInput] = useState("");
+  const [homeCoords, setHomeCoords] = useState(null);
+  const [gpsNear, setGpsNear] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [mapFocus, setMapFocus] = useState(null);
+
+  const [showMap, setShowMap] = useState(false);
+  const [geocodingHome, setGeocodingHome] = useState(false);
+  const [savingHome, setSavingHome] = useState(false);
+  const [locating, setLocating] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("Users");
+
+      if (!stored) {
+        navigate("/login");
+        return;
+      }
+
+      const parsed = JSON.parse(stored);
+
+      if (!parsed || typeof parsed !== "object") {
+        navigate("/login");
+        return;
+      }
+
+      if (parsed.points === undefined) parsed.points = 20;
+
+      setUser(parsed);
+      setProfilePic(parsed.profilePic || "");
+      setSkills(Array.isArray(parsed.skills) ? parsed.skills : []);
+      setHomeAddressInput(parsed.homeAddress || "");
+
+      if (parsed.homeLat != null && parsed.homeLng != null) {
+        setHomeCoords({
+          lat: Number(parsed.homeLat),
+          lng: Number(parsed.homeLng),
+        });
+      }
+    } catch (error) {
+      console.error("Profile loading error:", error);
+      toast.error("Profile data load nahi hua.");
     }
   }, [navigate]);
 
-  const handleAddSkill = (e) => {
-    e.preventDefault();
-    if (!skillInput.trim()) return;
-    const updatedSkills = [...skills, skillInput.trim()];
-    setSkills(updatedSkills);
-    setSkillInput('');
-    const updatedUser = { ...user, skills: updatedSkills };
+  // Safe local save: UI state remains updated even if storage is full.
+  const saveUserSafely = (updatedUser) => {
     setUser(updatedUser);
-    localStorage.setItem("Users", JSON.stringify(updatedUser));
-    toast.success("Skill added");
-  };
 
-  const handleRemoveSkill = (i) => {
-    const updatedSkills = skills.filter((_, idx) => idx !== i);
-    setSkills(updatedSkills);
-    const updatedUser = { ...user, skills: updatedSkills };
-    setUser(updatedUser);
-    localStorage.setItem("Users", JSON.stringify(updatedUser));
-    toast.success("Skill removed");
-  };
+    try {
+      localStorage.setItem("Users", JSON.stringify(updatedUser));
+      return true;
+    } catch (error) {
+      console.error("User storage error:", error);
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result;
-        setProfilePic(base64String);
-        const updatedUser = { ...user, profilePic: base64String };
-        setUser(updatedUser);
-        localStorage.setItem("Users", JSON.stringify(updatedUser));
-        window.dispatchEvent(new Event('profileUpdated'));
-        toast.success("Photo updated");
-      };
-      reader.readAsDataURL(file);
+      if (error.name === "QuotaExceededError") {
+        toast.error(
+          "Browser storage full hai. Profile photo ko remove ya compress karo."
+        );
+      } else {
+        toast.error("Browser mein profile save nahi ho paayi.");
+      }
+
+      return false;
     }
   };
 
+  const handleAddSkill = (event) => {
+    event.preventDefault();
+
+    const newSkill = skillInput.trim();
+
+    if (!newSkill) {
+      toast.error("Skill ka naam likho.");
+      return;
+    }
+
+    if (!user) {
+      toast.error("User data load nahi hua. Dobara login karo.");
+      return;
+    }
+
+    if (
+      skills.some(
+        (skill) =>
+          String(skill).toLowerCase() === newSkill.toLowerCase()
+      )
+    ) {
+      toast.error("Ye skill pehle se added hai.");
+      return;
+    }
+
+    const updatedSkills = [...skills, newSkill];
+    const updatedUser = { ...user, skills: updatedSkills };
+
+    setSkills(updatedSkills);
+    setSkillInput("");
+
+    const saved = saveUserSafely(updatedUser);
+
+    if (saved) {
+      toast.success(`${newSkill} added successfully!`);
+    }
+  };
+
+  const handleRemoveSkill = (index) => {
+    const updatedSkills = skills.filter((_, i) => i !== index);
+    const updatedUser = { ...user, skills: updatedSkills };
+
+    setSkills(updatedSkills);
+
+    const saved = saveUserSafely(updatedUser);
+
+    if (saved) toast.success("Skill removed.");
+  };
+
+  const handleImageChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Image file select karo.");
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Photo 2 MB se chhoti honi chahiye.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const image = reader.result;
+      const updatedUser = { ...user, profilePic: image };
+
+      setProfilePic(image);
+
+      if (saveUserSafely(updatedUser)) {
+        window.dispatchEvent(new Event("profileUpdated"));
+        toast.success("Photo updated.");
+      }
+    };
+
+    reader.onerror = () => toast.error("Photo read nahi ho paayi.");
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
   const handleRemovePhoto = () => {
-    toast((t) => (
-      <div className="flex flex-col gap-2.5 p-1 text-white">
-        <p className="text-xs font-bold">Delete profile picture?</p>
-        <div className="flex gap-2 justify-end">
-          <button
-            onClick={() => toast.dismiss(t.id)}
-            className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs font-semibold hover:bg-slate-700 transition"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => {
-              toast.dismiss(t.id);
-              setProfilePic('');
-              const updatedUser = { ...user, profilePic: '' };
-              setUser(updatedUser);
-              localStorage.setItem("Users", JSON.stringify(updatedUser));
-              window.dispatchEvent(new Event('profileUpdated'));
-              toast.success("Photo removed");
-            }}
-            className="px-3 py-1.5 rounded-lg bg-red-600 text-xs font-bold hover:bg-red-500 transition"
-          >
-            Remove
-          </button>
+    toast(
+      (t) => (
+        <div className="flex flex-col gap-3 text-white">
+          <p className="text-sm font-semibold">Profile photo remove karein?</p>
+
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => toast.dismiss(t.id)}
+              className="rounded-lg bg-slate-700 px-3 py-2 text-xs"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                toast.dismiss(t.id);
+
+                const updatedUser = { ...user, profilePic: "" };
+
+                setProfilePic("");
+                saveUserSafely(updatedUser);
+                window.dispatchEvent(new Event("profileUpdated"));
+                toast.success("Photo removed.");
+              }}
+              className="rounded-lg bg-red-600 px-3 py-2 text-xs"
+            >
+              Remove
+            </button>
+          </div>
         </div>
-      </div>
-    ), {
-      duration: Infinity,
-      position: 'top-center',
-      style: {
-        background: '#0b1220',
-        color: '#fff',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: '14px',
-        padding: '12px 16px',
-      },
-    });
+      ),
+      { duration: Infinity, position: "top-center" }
+    );
   };
 
   const handleGeocodeHome = async () => {
-    if (!homeAddressInput.trim()) { toast.error("Pehle address likho!"); return; }
-    const plusCodePattern = /\b[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b\s*,?\s*/gi;
-    const cleanedAddress = homeAddressInput.trim().replace(plusCodePattern, "").trim();
-    const tryGeocode = async (query) => {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=1`
-      );
-      return res.json();
-    };
+    const address = homeAddressInput.trim();
+
+    if (!address) {
+      toast.error("House number aur address enter karo.");
+      return;
+    }
+
+    setGeocodingHome(true);
+
     try {
-      setGeocodingHome(true);
-      let data = await tryGeocode(cleanedAddress || homeAddressInput.trim());
-      if ((!data || data.length === 0) && cleanedAddress !== homeAddressInput.trim()) {
-        data = await tryGeocode(homeAddressInput.trim());
-      }
-      if (data && data.length > 0) {
-        const { lat, lon } = data[0];
-        setHomeCoords({ lat: parseFloat(lat), lng: parseFloat(lon) });
-        if (cleanedAddress && cleanedAddress !== homeAddressInput.trim()) {
-          setHomeAddressInput(cleanedAddress);
-        }
-        toast.success("Location pinpointed");
+      const found = await searchPlaces(address, gpsNear);
+
+      setSuggestions(found);
+      setShowMap(true);
+
+      if (found.length) {
+        const first = {
+          lat: found[0].lat,
+          lng: found[0].lng,
+        };
+
+        setHomeCoords(first);
+        setMapFocus({ ...first, key: Date.now() });
+
+        toast.success(
+          "Area mil gaya. Exact ghar ke liye pin adjust karo."
+        );
       } else {
-        toast.error("Address nahi mila");
+        const fallback = gpsNear || {
+          lat: 28.6725,
+          lng: 77.4355,
+        };
+
+        setMapFocus({ ...fallback, key: Date.now() });
+
+        if (!homeCoords) setHomeCoords(fallback);
+
+        toast(
+          "House number nahi mila. Map par actual ghar ki location select karo."
+        );
       }
-    } catch (err) {
-      console.error(err);
-      toast.error("Location error");
+    } catch (error) {
+      console.error("Geocoding error:", error);
+      setShowMap(true);
+      toast.error("Search fail hui. Map par pin set karo.");
     } finally {
       setGeocodingHome(false);
     }
   };
 
+  const fillFromGps = () => {
+    if (!navigator.geolocation) {
+      toast.error("Browser GPS support nahi karta.");
+      return;
+    }
+
+    setLocating(true);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const point = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+
+        setGpsNear(point);
+        setHomeCoords(point);
+        setMapFocus({ ...point, key: Date.now() });
+        setSuggestions([]);
+        setShowMap(true);
+
+        const reverseAddress = await reverseGeocode(
+          point.lat,
+          point.lng
+        );
+
+        if (reverseAddress) {
+          setHomeAddressInput((current) =>
+            current.trim() ? current : reverseAddress
+          );
+        }
+
+        setLocating(false);
+        toast.success("Location mil gayi. Pin adjust karke Save karo.");
+      },
+      (error) => {
+        console.error("GPS error:", error);
+        setLocating(false);
+        toast.error("GPS permission allow karo ya map par pin set karo.");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const handlePinPick = async (point) => {
+    setHomeCoords(point);
+
+    if (!homeAddressInput.trim()) {
+      const address = await reverseGeocode(point.lat, point.lng);
+      if (address) setHomeAddressInput(address);
+    }
+  };
+
+  const toggleMap = () => {
+    if (!showMap) {
+      const point = homeCoords || gpsNear;
+
+      if (point) {
+        setMapFocus({ ...point, key: Date.now() });
+      } else {
+        setMapFocus({
+          lat: 28.6725,
+          lng: 77.4355,
+          key: Date.now(),
+        });
+      }
+    }
+
+    setShowMap((current) => !current);
+  };
+
   const handleSaveHomeLocation = async () => {
-    if (!homeAddressInput.trim()) { toast.error("Address required!"); return; }
-    let coords = homeCoords;
-    if (!coords) { await handleGeocodeHome(); return; }
+    const address = homeAddressInput.trim();
+
+    if (!address) {
+      toast.error("House number aur address enter karo.");
+      return;
+    }
+
+    if (!homeCoords) {
+      toast.error("Pehle Pinpoint ya Use my location dabao.");
+      setShowMap(true);
+      return;
+    }
+
+    setSavingHome(true);
+
     try {
-      setSavingHome(true);
       const response = await fetch(`${API}/users/home-location`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: user.email,
-          homeAddress: homeAddressInput.trim(),
-          homeLat: coords.lat,
-          homeLng: coords.lng,
+          homeAddress: address,
+          homeLat: homeCoords.lat,
+          homeLng: homeCoords.lng,
         }),
       });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.message || "Save failed");
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message || `Address save failed (${response.status})`
+        );
+      }
+
       const updatedUser = {
         ...user,
-        homeAddress: data.user.homeAddress,
-        homeLat: data.user.homeLat,
-        homeLng: data.user.homeLng,
+        homeAddress: data.user?.homeAddress || address,
+        homeLat: data.user?.homeLat ?? homeCoords.lat,
+        homeLng: data.user?.homeLng ?? homeCoords.lng,
       };
-      setUser(updatedUser);
-      localStorage.setItem("Users", JSON.stringify(updatedUser));
-      toast.success("Address saved");
+
+      setHomeAddressInput(updatedUser.homeAddress);
+      saveUserSafely(updatedUser);
+
+      toast.success("Home address saved.");
     } catch (error) {
-      console.error(error);
-      toast.error(error.message || "Server error");
+      console.error("Home address save error:", error);
+
+      // Keep the address in this browser even if the server request fails.
+      const localUser = {
+        ...user,
+        homeAddress: address,
+        homeLat: homeCoords.lat,
+        homeLng: homeCoords.lng,
+      };
+
+      saveUserSafely(localUser);
+
+      toast.error(
+        `Server par save nahi hua: ${error.message}. Backend route check karo.`
+      );
     } finally {
       setSavingHome(false);
     }
   };
 
   if (!user) return null;
-  const hasSavedHome = user.homeLat != null && user.homeLng != null;
+
+  const hasSavedHome =
+    user.homeLat != null && user.homeLng != null;
+
+  const getInitials = (name) =>
+    name ? String(name).charAt(0).toUpperCase() : "U";
 
   return (
-    <div className="min-h-screen bg-[#050a14] text-slate-100 flex flex-col relative overflow-hidden">
-      {/* Ambient aurora — subtle, no harsh glow */}
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#050a14] text-slate-100">
       <div className="pointer-events-none fixed inset-0">
-        <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-blue-700/15 rounded-full blur-[140px]" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-indigo-700/10 rounded-full blur-[140px]" />
+        <div className="absolute -left-[10%] -top-[20%] h-[60%] w-[60%] rounded-full bg-blue-700/15 blur-[140px]" />
+        <div className="absolute -bottom-[20%] -right-[10%] h-[60%] w-[60%] rounded-full bg-indigo-700/10 blur-[140px]" />
       </div>
 
-      <main className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12 relative z-10 flex-1">
-
-        {/* Back */}
+      <main className="relative z-10 mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6 sm:py-12">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-200 mb-6 transition"
+          className="mb-6 inline-flex items-center gap-2 text-xs font-semibold text-slate-400 transition hover:text-white"
         >
           <HiOutlineArrowLeft />
           Back to Home
         </Link>
 
-        {/* ─── MAIN PANEL ─── */}
-        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-2xl overflow-hidden shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]">
+        <div className="overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.02] shadow-2xl backdrop-blur-2xl">
+          <header className="relative border-b border-white/[0.06] px-6 pb-8 pt-10 sm:px-10">
+            <div className="absolute left-0 right-0 top-0 h-[3px] bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
 
-          {/* HERO STRIP with avatar */}
-          <div className="relative px-6 sm:px-10 pt-10 pb-8 border-b border-white/[0.06]">
-            {/* Accent line */}
-            <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-gray-500 via-gray-500 to-gray-500" />
+            <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-end">
+              <div className="group relative shrink-0">
+                <div className="absolute -inset-2 rounded-full bg-gradient-to-br from-blue-600 to-purple-600/20 blur-xl" />
 
-            <div className="flex flex-col sm:flex-row items-center sm:items-end gap-6">
-
-              {/* AVATAR — bigger, deeper */}
-              <div className="relative group shrink-0">
-                <div className="absolute -inset-2 rounded-full bg-gradient-to-br from-red-600 to-orange-600/20 blur-xl" />
-                <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-full overflow-hidden bg-slate-800 ring-4 ring-[#0a1120]">
+                <div className="relative h-28 w-28 overflow-hidden rounded-full bg-slate-800 ring-4 ring-[#0a1120] sm:h-32 sm:w-32">
                   {profilePic ? (
-                    <img src={profilePic} alt="Profile" className="w-full h-full object-cover" />
+                    <img
+                      src={profilePic}
+                      alt="Profile"
+                      className="h-full w-full object-cover"
+                    />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-4xl font-bold text-white bg-gradient-to-br from-gray-900 to-gray-600">
+                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-gray-900 to-gray-600 text-4xl font-bold">
                       {getInitials(user.fullname || user.email)}
                     </div>
                   )}
                 </div>
 
-                {/* Upload overlay */}
-                <label className="absolute inset-0 rounded-full bg-black/70 flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 active:opacity-100 transition cursor-pointer">
-                  <HiOutlineCamera className="text-xl text-white" />
-                  <span className="text-[10px] font-semibold text-white uppercase tracking-wider">Change</span>
-                  <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+                <label className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-full bg-black/70 opacity-0 transition group-hover:opacity-100 group-active:opacity-100">
+                  <HiOutlineCamera className="text-xl" />
+                  <span className="text-[10px] font-semibold uppercase">
+                    Change photo
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageChange}
+                    className="hidden"
+                  />
                 </label>
 
                 {profilePic && (
                   <button
+                    type="button"
                     onClick={handleRemovePhoto}
-                    className="absolute bottom-1 right-1 w-9 h-9 rounded-full bg-[#0a1120] border border-white/10 text-slate-400 hover:text-red-400 hover:border-red-500/40 flex items-center justify-center transition shadow-lg"
+                    aria-label="Remove profile photo"
+                    className="absolute bottom-1 right-1 flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-[#0a1120] text-slate-300 transition hover:text-red-400"
                   >
-                    <HiTrash className="text-sm" />
+                    <HiTrash />
                   </button>
                 )}
               </div>
 
-              {/* NAME + EMAIL + TRUST */}
-              <div className="flex-1 min-w-0 text-center sm:text-left pb-1">
-                <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white truncate">
+              <div className="min-w-0 flex-1 pb-1 text-center sm:text-left">
+                <h1 className="truncate text-3xl font-bold tracking-tight text-white sm:text-4xl">
                   {user.fullname || "Neighbour User"}
                 </h1>
-                <p className="text-sm text-slate-400 flex items-center justify-center sm:justify-start gap-2 mt-2">
-                  <HiOutlineMail className="text-base text-slate-500" />
+
+                <p className="mt-2 flex items-center justify-center gap-2 text-sm text-slate-400 sm:justify-start">
+                  <HiOutlineMail />
                   <span className="truncate">{user.email}</span>
                 </p>
-                <div className="inline-flex items-center gap-1.5 mt-3 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                  <HiOutlineShieldCheck className="text-emerald-400 text-xs" />
-                  <span className="text-[10px] font-semibold text-emerald-300 uppercase tracking-wider">
+
+                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1">
+                  <HiOutlineShieldCheck className="text-emerald-400" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
                     Verified neighbour
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* STATS ROW */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-8">
-              {/* Credits */}
+            <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <HiOutlineStar className="text-amber-400 text-base" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                <div className="mb-2 flex items-center gap-2">
+                  <HiOutlineStar className="text-amber-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Credits
                   </span>
                 </div>
-                <p className="text-2xl font-bold text-white">{user.points ?? 20}</p>
+                <p className="text-2xl font-bold">{user.points ?? 20}</p>
               </div>
 
-              {/* Skills count */}
               <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <HiOutlineLightningBolt className="text-blue-400 text-base" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                <div className="mb-2 flex items-center gap-2">
+                  <HiOutlineLightningBolt className="text-blue-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Skills
                   </span>
                 </div>
-                <p className="text-2xl font-bold text-white">{skills.length}</p>
+                <p className="text-2xl font-bold">{skills.length}</p>
               </div>
 
-              {/* Home status */}
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 col-span-2 sm:col-span-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <HiOutlineLocationMarker className="text-indigo-400 text-base" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <div className="col-span-2 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 sm:col-span-1">
+                <div className="mb-2 flex items-center gap-2">
+                  <HiOutlineLocationMarker className="text-indigo-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Home
                   </span>
                 </div>
@@ -312,46 +705,36 @@ export default function Profile() {
                 </p>
               </div>
             </div>
-          </div>
+          </header>
 
-          {/* ─── BODY: 2-column on desktop ─── */}
           <div className="grid grid-cols-1 lg:grid-cols-2">
-
-            {/* HOME ADDRESS */}
-            <section className="p-6 sm:p-8 border-b lg:border-b-0 lg:border-r border-white/[0.06]">
-              <div className="flex items-center gap-3 mb-1">
-                <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                  <HiOutlineLocationMarker className="text-blue-400 text-lg" />
+            <section className="border-b border-white/[0.06] p-6 sm:p-8 lg:border-b-0 lg:border-r">
+              <div className="mb-1 flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-500/20 bg-blue-500/10">
+                  <HiOutlineLocationMarker className="text-lg text-blue-400" />
                 </div>
-                <h2 className="text-lg font-bold text-white">Home Address</h2>
+                <h2 className="text-lg font-bold">Home Address</h2>
               </div>
-              <p className="text-xs text-slate-500 mb-6 leading-relaxed">
-              Permanent <span>Address</span>
+
+              <p className="mb-5 text-xs leading-relaxed text-slate-400">
+                House number, block, street, area and city enter karo.
               </p>
 
-              {/* Status */}
               <div className="mb-4">
                 {homeCoords ? (
-                  <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                    <span className="text-[10px] font-semibold text-blue-300 uppercase tracking-wider">
-                      Pinpointed
-                    </span>
-                  </div>
+                  <span className="inline-flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-blue-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                    Pinpointed
+                  </span>
                 ) : hasSavedHome ? (
-                  <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20">
-                    <HiCheck className="text-emerald-400 text-xs" />
-                    <span className="text-[10px] font-semibold text-emerald-300 uppercase tracking-wider">
-                      Saved
-                    </span>
-                  </div>
+                  <span className="inline-flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-emerald-300">
+                    <HiCheck />
+                    Saved
+                  </span>
                 ) : (
-                  <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                    <span className="text-[10px] font-semibold text-amber-300 uppercase tracking-wider">
-                      Setup pending
-                    </span>
-                  </div>
+                  <span className="inline-flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-amber-300">
+                    Setup pending
+                  </span>
                 )}
               </div>
 
@@ -359,103 +742,190 @@ export default function Profile() {
                 <input
                   type="text"
                   value={homeAddressInput}
-                  onChange={(e) => {
-                    setHomeAddressInput(e.target.value);
-                    setHomeCoords(null);
-                  }}
-                  placeholder="House no, area, city"
-                  className="w-full h-11 px-4 rounded-xl bg-black/30 border border-white/[0.08] text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/10 transition"
+                  onChange={(event) => setHomeAddressInput(event.target.value)}
+                  placeholder="C-535B, Gali 4, Brij Vihar, Ghaziabad"
+                  className="h-11 w-full rounded-xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-blue-500/60"
                 />
+
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={handleGeocodeHome}
                     disabled={geocodingHome}
-                    className="flex-1 h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs font-semibold text-slate-200 transition disabled:opacity-50"
+                    className="h-11 flex-1 rounded-xl border border-white/10 bg-white/[0.05] text-xs font-semibold transition hover:bg-white/10 disabled:opacity-50"
                   >
                     {geocodingHome ? "Locating..." : "Pinpoint"}
                   </button>
+
                   <button
                     type="button"
                     onClick={handleSaveHomeLocation}
                     disabled={savingHome || geocodingHome}
-                    className="flex-1 h-11 rounded-xl bg-gray-400 hover:bg-gray-800 text-xs font-bold uppercase tracking-wider text-black transition disabled:opacity-50 shadow-lg shadow-blue-600/20"
+                    className="h-11 flex-1 rounded-xl bg-blue-500 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-blue-400 disabled:opacity-50"
                   >
                     {savingHome ? "Saving..." : "Save"}
                   </button>
                 </div>
               </div>
 
+              <div className="mt-2.5 flex gap-2">
+                <button
+                  type="button"
+                  onClick={fillFromGps}
+                  disabled={locating}
+                  className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-blue-500/25 bg-blue-500/[0.08] text-xs font-semibold text-blue-300 transition hover:bg-blue-500/[0.14] disabled:opacity-50"
+                >
+                  <HiOutlineLocationMarker />
+                  {locating ? "Locating..." : "Use my location"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleMap}
+                  className="h-10 flex-1 rounded-xl border border-white/10 bg-white/[0.04] text-xs font-semibold transition hover:bg-white/[0.08]"
+                >
+                  {showMap ? "Hide map" : "Pick on map"}
+                </button>
+              </div>
+
+              {suggestions.length > 0 && (
+                <div className="mt-3 max-h-40 overflow-y-auto rounded-xl border border-white/10 bg-black/20">
+                  {suggestions.map((suggestion, index) => (
+                    <button
+                      key={`${suggestion.lat}-${suggestion.lng}-${index}`}
+                      type="button"
+                      onClick={() => {
+                        const point = {
+                          lat: suggestion.lat,
+                          lng: suggestion.lng,
+                        };
+
+                        setHomeCoords(point);
+                        setMapFocus({ ...point, key: Date.now() });
+                        setShowMap(true);
+                      }}
+                      className="block w-full border-b border-white/5 px-3 py-2.5 text-left text-xs text-slate-300 transition last:border-0 hover:bg-white/[0.06]"
+                    >
+                      {suggestion.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {showMap && (
+                <div className="mt-3">
+                  <div className="relative z-0 h-64 w-full overflow-hidden rounded-2xl border border-white/10">
+                    <PinPicker
+                      focus={mapFocus}
+                      fallback={gpsNear}
+                      position={homeCoords}
+                      onPick={handlePinPick}
+                    />
+                  </div>
+
+                  <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+                    Map par apne actual ghar ki jagah tap karo ya pin drag
+                    karo. Phir Save dabao.
+                  </p>
+                </div>
+              )}
+
               {homeCoords && (
-                <p className="text-[10px] text-slate-500 mt-3 font-mono">
-                  {homeCoords.lat.toFixed(5)}, {homeCoords.lng.toFixed(5)}
+                <p className="mt-3 break-all font-mono text-[10px] text-slate-400">
+                  Coordinates: {homeCoords.lat.toFixed(6)},{" "}
+                  {homeCoords.lng.toFixed(6)}
                 </p>
               )}
-              {hasSavedHome && !homeCoords && user.homeAddress && (
-                <p className="text-[11px] text-slate-400 mt-3 truncate">
-                  📍 {user.homeAddress}
+
+              {user.homeAddress && (
+                <p className="mt-3 break-words text-xs text-slate-300">
+                  <span className="text-slate-500">Saved address: </span>
+                  {user.homeAddress}
                 </p>
               )}
             </section>
 
-            {/* SKILLS */}
             <section className="p-6 sm:p-8">
-              <div className="flex items-center gap-3 mb-1">
-                <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-                  <HiOutlineLightningBolt className="text-indigo-400 text-lg" />
+              <div className="mb-1 flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10">
+                  <HiOutlineLightningBolt className="text-lg text-indigo-400" />
                 </div>
-                <h2 className="text-lg font-bold text-white">Skills</h2>
+                <h2 className="text-lg font-bold">Skills</h2>
               </div>
-              <p className="text-xs text-slate-500 mb-6 leading-relaxed">
-                Errands you can help neighbours with (1–2 km range).
+
+              <p className="mb-6 text-xs leading-relaxed text-slate-400">
+                Neighbours ko jin errands mein help kar sakte ho, woh add karo.
               </p>
 
-              <form onSubmit={handleAddSkill} className="flex gap-2 mb-5">
+              <form
+                onSubmit={handleAddSkill}
+                className="mb-5 flex gap-2"
+              >
                 <input
                   type="text"
                   value={skillInput}
-                  onChange={(e) => setSkillInput(e.target.value)}
+                  onChange={(event) => setSkillInput(event.target.value)}
                   placeholder="Grocery pickup, Quick fix..."
-                  className="flex-1 h-11 px-4 rounded-xl bg-black/30 border border-white/[0.08] text-sm text-slate-100 placeholder:text-slate-600 outline-none focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/10 transition"
+                  className="h-11 min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-indigo-500/60"
                 />
+
                 <button
                   type="submit"
-                  className="h-11 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition flex items-center gap-1.5 shadow-lg shadow-indigo-600/20"
+                  className="flex h-11 items-center gap-1.5 rounded-xl bg-indigo-600 px-4 text-xs font-bold text-white shadow-lg transition hover:bg-indigo-500"
                 >
-                  <HiPlus className="text-sm" />
+                  <HiPlus />
                   Add
                 </button>
               </form>
+
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-xs text-slate-400">
+                  Your skills
+                </span>
+                <span className="rounded-full bg-indigo-500/10 px-2.5 py-1 text-xs font-semibold text-indigo-300">
+                  {skills.length}
+                </span>
+              </div>
 
               <div className="flex flex-wrap gap-2">
                 <AnimatePresence>
                   {skills.map((skill, index) => (
                     <motion.div
-                      key={skill + index}
+                      key={`${skill}-${index}`}
                       layout
-                      initial={{ opacity: 0, scale: 0.95 }}
+                      initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      transition={{ duration: 0.15 }}
-                      className="group flex items-center gap-2 pl-3 pr-1.5 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08] hover:border-white/[0.15] text-xs transition"
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      className="group flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] py-2 pl-3 pr-1.5 text-xs"
                     >
-                      <span className="text-slate-200 font-medium">{skill}</span>
+                      <span className="break-words font-medium text-slate-200">
+                        {skill}
+                      </span>
+
                       <button
                         type="button"
+                        aria-label={`Remove ${skill}`}
                         onClick={() => handleRemoveSkill(index)}
-                        className="w-5 h-5 rounded flex items-center justify-center text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition"
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-red-500/10 hover:text-red-400"
                       >
-                        <HiTrash className="text-[11px]" />
+                        <HiTrash />
                       </button>
                     </motion.div>
                   ))}
                 </AnimatePresence>
 
-                {skills.length === 0 && (
-                  <p className="text-xs text-slate-600 italic py-2">
-                    Koi skill add nahi ki abhi.
+                {!skills.length && (
+                  <p className="py-2 text-xs italic text-slate-500">
+                    Abhi koi skill nahi hai. Upar se add karo.
                   </p>
                 )}
+              </div>
+
+              <div className="mt-6 rounded-xl border border-indigo-500/15 bg-indigo-500/[0.05] p-3">
+                <p className="text-xs leading-relaxed text-slate-400">
+                  Example skills: Grocery Pickup, Parcel Receiving,
+                  Bank Errands, Tutoring, Pet Walking.
+                </p>
               </div>
             </section>
           </div>

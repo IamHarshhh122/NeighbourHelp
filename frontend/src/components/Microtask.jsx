@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
-import {HiPlus,HiLocationMarker,HiClock,HiUser,HiTrash,HiMap,HiRefresh,HiX,HiPlay,HiArrowNarrowUp,
-HiArrowNarrowLeft,HiArrowNarrowRight,HiFlag,HiCamera,HiCheckCircle,HiExclamationCircle,
+import {
+  HiPlus, HiLocationMarker, HiClock, HiUser, HiTrash, HiMap, HiRefresh, HiX,
+  HiPlay, HiArrowNarrowUp, HiArrowNarrowLeft, HiArrowNarrowRight, HiFlag,
+  HiCamera, HiCheckCircle, HiExclamationCircle,
 } from "react-icons/hi";
 import { toast } from "react-hot-toast";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import "leaflet-routing-machine";
@@ -23,8 +25,240 @@ const BACKEND_URL = (
   .replace(/\/+$/, "");
 
 const API = `${BACKEND_URL}/api`;
+const NOMINATIM = "https://nominatim.openstreetmap.org";
+const PHOTON = "https://photon.komoot.io";
 
-/* REWARD CALCULATION*/
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const HOUSE_NUM_PATTERNS = [
+  /^\d+[\/\-]\d+[a-z]?$/i,
+  /^[a-z]?[\/\-]?\d+[a-z]?$/i,
+  /^\d+$/i,
+  /^block\s*[a-z0-9]+$/i,
+  /^plot\s*no\.?\s*\d+$/i,
+  /^house\s*no\.?\s*\d+$/i,
+  /^flat\s*no\.?\s*\d+$/i,
+  /^sector\s*\d+$/i,
+];
+
+const NOISE_WORDS = /^(u\.?p\.?|uttar pradesh|india|near|opposite|opp|beside|behind|in front of)$/i;
+
+const isHouseNumber = (part) =>
+  HOUSE_NUM_PATTERNS.some((re) => re.test(part.trim()));
+
+const isNoise = (part) => NOISE_WORDS.test(part.trim());
+
+const stripLeadingHouseNum = (str) =>
+  str.replace(/^[a-z]?\d+[a-z]?[\/\-]?\d*[a-z]?\s+/i, "").trim();
+
+function buildQueries(address) {
+  const clean = address.trim().replace(/\s+/g, " ");
+  const parts = clean.split(",").map((p) => p.trim()).filter(Boolean);
+
+  const pincode = clean.match(/\b\d{6}\b/)?.[0] || null;
+  const meaningful = parts.filter((p) => !isHouseNumber(p) && !isNoise(p));
+  const cleanedMeaningful = meaningful.map(stripLeadingHouseNum).filter(Boolean);
+
+  const queries = [];
+
+  if (clean) queries.push(clean);
+  if (meaningful.length) queries.push(meaningful.join(", "));
+  if (cleanedMeaningful.length) queries.push(cleanedMeaningful.join(", "));
+
+  for (let n = 4; n >= 1; n--) {
+    if (cleanedMeaningful.length >= n) {
+      queries.push(cleanedMeaningful.slice(-n).join(", "));
+    }
+  }
+
+  if (cleanedMeaningful.length > 1) {
+    queries.push(cleanedMeaningful.slice(1).join(", "));
+  }
+
+  if (pincode) {
+    queries.push(`${pincode} India`);
+    queries.push(pincode);
+  }
+
+  return [...new Set(queries)].filter((q) => q && q.length >= 3);
+}
+
+async function nominatimSearch(query, near) {
+  try {
+    const params = new URLSearchParams({
+      format: "jsonv2",
+      addressdetails: "1",
+      limit: "5",
+      countrycodes: "in",
+      q: query,
+    });
+
+    if (near) {
+      const d = 0.5;
+      params.set(
+        "viewbox",
+        `${near.lng - d},${near.lat + d},${near.lng + d},${near.lat - d}`
+      );
+    }
+
+    const res = await fetch(`${NOMINATIM}/search?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+
+    if (!res.ok) {
+      if (res.status === 429) await sleep(2000);
+      return [];
+    }
+
+    const data = await res.json();
+    return (data || []).map((item) => ({
+      lat: Number(item.lat),
+      lng: Number(item.lon),
+      label: item.display_name,
+    }));
+  } catch (err) {
+    console.warn("Nominatim failed:", err);
+    return [];
+  }
+}
+
+async function photonSearch(query, near) {
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      limit: "5",
+      lang: "en",
+    });
+
+    if (near) {
+      params.set("lat", String(near.lat));
+      params.set("lon", String(near.lng));
+    }
+
+    const res = await fetch(`${PHOTON}/api/?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    return (data.features || [])
+      .filter((f) => {
+        const country = f.properties?.countrycode;
+        return !country || country === "IN";
+      })
+      .map((f) => {
+        const p = f.properties || {};
+        const labelParts = [
+          p.name,
+          p.street,
+          p.district,
+          p.city,
+          p.state,
+          p.postcode,
+        ].filter(Boolean);
+        return {
+          lat: Number(f.geometry.coordinates[1]),
+          lng: Number(f.geometry.coordinates[0]),
+          label: labelParts.join(", ") || p.name || "Unknown",
+        };
+      });
+  } catch (err) {
+    console.warn("Photon failed:", err);
+    return [];
+  }
+}
+
+async function searchPlaces(address, near) {
+  const queries = buildQueries(address);
+  if (!queries.length) return [];
+
+  const seen = new Set();
+  const collected = [];
+  const addResult = (r) => {
+    const key = `${r.lat.toFixed(4)},${r.lng.toFixed(4)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    collected.push(r);
+  };
+
+  const pincode = address.match(/\b\d{6}\b/)?.[0] || null;
+  const tokens = buildQueries(address)
+    .flatMap((q) => q.split(/[,\s]+/))
+    .map(norm)
+    .filter((t) => t.length > 2);
+
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+
+    const nomResults = await nominatimSearch(q, near);
+    nomResults.forEach(addResult);
+    if (collected.length >= 4) break;
+
+    const phResults = await photonSearch(q, near);
+    phResults.forEach(addResult);
+    if (collected.length >= 4) break;
+
+    if (i < queries.length - 1) await sleep(1100);
+  }
+
+  const score = (r) => {
+    let s = 0;
+    const label = norm(r.label);
+    for (const t of tokens) if (label.includes(t)) s += 2;
+    if (pincode && r.label.includes(pincode)) s += 6;
+    if (near) {
+      const dLat = Math.abs(r.lat - near.lat);
+      const dLng = Math.abs(r.lng - near.lng);
+      const d = dLat + dLng;
+      if (d < 0.05) s += 5;
+      else if (d < 0.2) s += 3;
+      else if (d < 0.5) s += 1;
+    }
+    return s;
+  };
+
+  collected.sort((a, b) => score(b) - score(a));
+  return collected.slice(0, 6);
+}
+
+async function reverseGeocode(lat, lng) {
+  try {
+    const params = new URLSearchParams({
+      format: "jsonv2",
+      lat: String(lat),
+      lon: String(lng),
+      zoom: "18",
+      addressdetails: "1",
+    });
+    const res = await fetch(`${NOMINATIM}/reverse?${params.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.display_name) return data.display_name;
+    }
+  } catch (err) {
+    console.warn("Nominatim reverse failed:", err);
+  }
+
+  try {
+    const res = await fetch(`${PHOTON}/reverse?lat=${lat}&lon=${lng}&lang=en`);
+    if (res.ok) {
+      const data = await res.json();
+      const p = data.features?.[0]?.properties;
+      if (p) {
+        return [p.name, p.street, p.district, p.city, p.state, p.postcode]
+          .filter(Boolean)
+          .join(", ");
+      }
+    }
+  } catch (err) {
+    console.warn("Photon reverse failed:", err);
+  }
+
+  return null;
+}
+
 const CATEGORY_BONUS = {
   "General Help": 0,
   "Parcel Receiving": 5,
@@ -77,18 +311,18 @@ function distanceMeters(a, b) {
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
-function getManeuverIcon(instruction) {
-  const mod = (instruction?.modifier || "").toLowerCase();
-  const type = (instruction?.type || "").toLowerCase();
-  if (type === "arrive" || type === "destinationreached") {
-    return { Icon: HiFlag, label: "Arrive" };
-  }
-  if (mod.includes("left")) return { Icon: HiArrowNarrowLeft, label: "Turn Left" };
-  if (mod.includes("right")) return { Icon: HiArrowNarrowRight, label: "Turn Right" };
-  return { Icon: HiArrowNarrowUp, label: "Continue Straight" };
+function getManeuverIcon(step) {
+  const type = (step?.type || "").toLowerCase();
+  const mod = (step?.modifier || "").toLowerCase();
+
+  if (type.includes("arrive")) return { Icon: HiFlag, label: "Arrive at destination" };
+  if (type.includes("depart")) return { Icon: HiArrowNarrowUp, label: "Start" };
+  if (mod.includes("left")) return { Icon: HiArrowNarrowLeft, label: "Turn left" };
+  if (mod.includes("right")) return { Icon: HiArrowNarrowRight, label: "Turn right" };
+  if (mod.includes("straight")) return { Icon: HiArrowNarrowUp, label: "Go straight" };
+  return { Icon: HiArrowNarrowUp, label: "Continue" };
 }
 
-/* ─────────── ROUTING MACHINE ─────────── */
 function RoutingMachine({ userLoc, taskLoc, onRouteFound, onRouteData, onRouteError, retryKey }) {
   const map = useMap();
   const routingControlRef = React.useRef(null);
@@ -110,15 +344,28 @@ function RoutingMachine({ userLoc, taskLoc, onRouteFound, onRouteData, onRouteEr
         addWaypoints: false,
         lineOptions: { styles: [{ color: "#10b981", weight: 5, opacity: 0.9 }] },
         createMarker: function (i, waypoint) {
-          return L.marker(waypoint.latLng, {
-            title: i === 0 ? "Start Location" : "Task Location",
+          const isStart = i === 0;
+          const icon = L.divIcon({
+            className: "",
+            html: `<div style="
+              width: 36px; height: 36px;
+              background: ${isStart ? "#10b981" : "#ef4444"};
+              border: 3px solid #ffffff;
+              border-radius: 50%;
+              box-shadow: 0 4px 14px ${isStart ? "rgba(16,185,129,0.6)" : "rgba(239,68,68,0.6)"};
+              display: flex; align-items: center; justify-content: center;
+              color: #ffffff; font-weight: 800; font-size: 14px;
+              font-family: system-ui, sans-serif;
+            ">${isStart ? "A" : "B"}</div>`,
+            iconSize: [36, 36],
+            iconAnchor: [18, 18],
           });
+          return L.marker(waypoint.latLng, { icon });
         },
       });
 
       timeoutId = setTimeout(() => {
         if (isMounted) {
-          console.warn("Routing timed out manually after 12s");
           if (onRouteFound) onRouteFound(null);
           if (onRouteData) onRouteData(null);
           if (onRouteError) onRouteError(true);
@@ -149,10 +396,9 @@ function RoutingMachine({ userLoc, taskLoc, onRouteFound, onRouteData, onRouteEr
         if (onRouteError) onRouteError(false);
       });
 
-      routingControl.on("routingerror", (err) => {
+      routingControl.on("routingerror", () => {
         clearTimeout(timeoutId);
         if (!isMounted) return;
-        console.warn("OSRM routing failed:", err);
         if (onRouteFound) onRouteFound(null);
         if (onRouteData) onRouteData(null);
         if (onRouteError) onRouteError(true);
@@ -190,6 +436,59 @@ function FollowUser({ position, active }) {
     }
   }, [map, position, active]);
   return null;
+}
+
+function PinClickHandler({ onPick }) {
+  useMapEvents({
+    click(e) {
+      onPick({ lat: e.latlng.lat, lng: e.latlng.lng });
+    },
+  });
+  return null;
+}
+
+function PinRecenter({ focus }) {
+  const map = useMap();
+  useEffect(() => {
+    if (focus) map.setView([focus.lat, focus.lng], 17);
+  }, [map, focus?.k]);
+  return null;
+}
+
+function PinPicker({ focus, fallback, position, onPick }) {
+  const markerRef = useRef(null);
+  const initial = focus || position || fallback || { lat: 28.6725, lng: 77.4355 };
+
+  return (
+    <MapContainer
+      center={[initial.lat, initial.lng]}
+      zoom={focus || position || fallback ? 16 : 5}
+      style={{ width: "100%", height: "100%" }}
+    >
+      <TileLayer
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+      <PinClickHandler onPick={onPick} />
+      <PinRecenter focus={focus} />
+      {position && (
+        <Marker
+          draggable
+          position={[position.lat, position.lng]}
+          ref={markerRef}
+          eventHandlers={{
+            dragend: () => {
+              const m = markerRef.current;
+              if (m) {
+                const ll = m.getLatLng();
+                onPick({ lat: ll.lat, lng: ll.lng });
+              }
+            },
+          }}
+        />
+      )}
+    </MapContainer>
+  );
 }
 
 function BackgroundLayer() {
@@ -273,7 +572,6 @@ function BackgroundLayer() {
   );
 }
 
-/* Helper */
 function CompletionModal({ task, onClose, onSubmit, submitting }) {
   const [photo, setPhoto] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -407,7 +705,6 @@ function CompletionModal({ task, onClose, onSubmit, submitting }) {
   );
 }
 
-/*  DISPUTE MODAL (Poster) */
 function DisputeModal({ task, onClose, onSubmit, submitting }) {
   const [reason, setReason] = useState("work_not_done");
   const [customReason, setCustomReason] = useState("");
@@ -510,7 +807,6 @@ function DisputeModal({ task, onClose, onSubmit, submitting }) {
   );
 }
 
-/*MAIN COMPONENT */
 export default function Microtask() {
   const [tasks, setTasks] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -537,6 +833,10 @@ export default function Microtask() {
   const [address, setAddress] = useState("");
   const [taskLocation, setTaskLocation] = useState(null);
   const [geocoding, setGeocoding] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showPicker, setShowPicker] = useState(false);
+  const [mapFocus, setMapFocus] = useState(null);
+  const [locating, setLocating] = useState(false);
 
   const [completionTask, setCompletionTask] = useState(null);
   const [submittingCompletion, setSubmittingCompletion] = useState(false);
@@ -657,31 +957,90 @@ export default function Microtask() {
   }, []);
 
   const handleAddressSearch = async (addr) => {
-    if (!addr.trim()) return null;
+    if (!addr.trim()) {
+      toast.error("Type a colony, landmark or address first");
+      return null;
+    }
+
     try {
       setGeocoding(true);
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          addr
-        )}&countrycodes=in&limit=1`
-      );
-      const data = await res.json();
-      if (data && data.length > 0) {
-        const { lat, lon } = data[0];
-        const newCoords = { lat: parseFloat(lat), lng: parseFloat(lon) };
-        setTaskLocation(newCoords);
-        toast.success("Location pinpointed");
-        return newCoords;
-      } else {
-        toast.error("Could not find address");
-        return null;
+      const found = await searchPlaces(addr, location);
+      setSuggestions(found);
+
+      if (found.length > 0) {
+        const first = { lat: found[0].lat, lng: found[0].lng };
+        setTaskLocation(first);
+        setMapFocus({ ...first, k: Date.now() });
+        setShowPicker(true);
+        toast.success(
+          found.length > 1
+            ? `${found.length} matches found. Pick the right one below.`
+            : "Location found! Drag the pin to your exact house/gate."
+        );
+        return first;
       }
+
+      const fallback = location || { lat: 28.66585, lng: 77.35115 };
+      setTaskLocation(fallback);
+      setMapFocus({ ...fallback, k: Date.now() });
+      setShowPicker(true);
+      toast("Couldn't auto-find this address. Drop the pin on the map.");
+      return fallback;
     } catch (err) {
       console.error("Geocoding error:", err);
+      toast.error("Search failed. Drop a pin on the map instead.");
+      setShowPicker(true);
       return null;
     } finally {
       setGeocoding(false);
     }
+  };
+
+  const fillFromGps = () => {
+    if (!navigator.geolocation) {
+      return toast.error("GPS is not supported by your browser");
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setTaskLocation(p);
+        setMapFocus({ ...p, k: Date.now() });
+        setSuggestions([]);
+        setShowPicker(true);
+        if (!address.trim()) {
+          const name = await reverseGeocode(p.lat, p.lng);
+          if (name) setAddress((cur) => (cur.trim() ? cur : name));
+        }
+        setLocating(false);
+        toast.success("Using your current location. Drag the pin to adjust.");
+      },
+      (err) => {
+        console.error("GPS Error:", err);
+        setLocating(false);
+        toast.error("Could not get your location. Allow GPS or pick on the map.");
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  const handlePinPick = async (p) => {
+    setTaskLocation(p);
+    if (!address.trim()) {
+      const name = await reverseGeocode(p.lat, p.lng);
+      if (name) setAddress((cur) => (cur.trim() ? cur : name));
+    }
+  };
+
+  const togglePicker = () => {
+    if (!showPicker && !mapFocus) {
+      if (location) {
+        setMapFocus({ ...location, k: Date.now() });
+      } else {
+        setMapFocus({ lat: 28.6669, lng: 77.3547, k: Date.now() });
+      }
+    }
+    setShowPicker((v) => !v);
   };
 
   const handlePostTask = async (e) => {
@@ -690,11 +1049,11 @@ export default function Microtask() {
     if (!title.trim() || !description.trim() || !address.trim()) {
       return toast.error("All fields are required");
     }
-    let finalLoc = taskLocation;
+    const finalLoc = taskLocation;
     if (!finalLoc) {
-      finalLoc = await handleAddressSearch(address.trim());
+      await handleAddressSearch(address.trim());
+      return;
     }
-    if (!finalLoc) return toast.error("Please enter a valid address");
 
     const distanceForReward = location
       ? calculateDistance(location.lat, location.lng, finalLoc.lat, finalLoc.lng)
@@ -726,6 +1085,9 @@ export default function Microtask() {
       setDescription("");
       setAddress("");
       setTaskLocation(null);
+      setSuggestions([]);
+      setShowPicker(false);
+      setMapFocus(null);
       setCategory("General Help");
       setShowModal(false);
       setActiveTab("posted");
@@ -864,7 +1226,7 @@ export default function Microtask() {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return toast.error("Task GPS unavailable");
     }
-    setRouteSource("home");
+    setRouteSource(helperHomeLoc ? "home" : "current");
     setRouteSummary(null);
     setRouteData(null);
     setRouteError(false);
@@ -903,6 +1265,7 @@ export default function Microtask() {
     },
   ];
   const current = tabs.find((t) => t.key === activeTab);
+  const routeOriginPoint = routeSource === "home" ? helperHomeLoc : location;
 
   const inputCls =
     "w-full h-11 px-4 rounded-xl bg-white/[0.03] border border-white/[0.08] text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/10 transition";
@@ -929,6 +1292,9 @@ export default function Microtask() {
             <button
               onClick={() => {
                 setTaskLocation(null);
+                setSuggestions([]);
+                setShowPicker(false);
+                setMapFocus(null);
                 setShowModal(true);
               }}
               className="h-11 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#04140a] text-sm font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
@@ -1014,7 +1380,6 @@ export default function Microtask() {
         )}
       </main>
 
-      {/* Post Task Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#0d1218] border border-white/[0.08] rounded-3xl w-full max-w-md shadow-2xl max-h-[92vh] overflow-y-auto">
@@ -1066,24 +1431,82 @@ export default function Microtask() {
                 <div className="flex gap-2">
                   <input
                     value={address}
-                    onChange={(e) => {
-                      setAddress(e.target.value);
-                      setTaskLocation(null);
-                    }}
-                    placeholder="Where should it be done? (address)"
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="e.g. 20/1686, Block B, Jhandapur, Sahibabad..."
                     className={`${inputCls} flex-1`}
                   />
                   <button
                     type="button"
                     onClick={() => handleAddressSearch(address)}
-                    className="px-4 h-11 rounded-xl border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] text-sm font-medium text-slate-200 transition shrink-0"
+                    disabled={geocoding}
+                    className="px-4 h-11 rounded-xl border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] text-sm font-medium text-slate-200 transition shrink-0 disabled:opacity-50"
                   >
-                    Find
+                    {geocoding ? "..." : "Find"}
                   </button>
                 </div>
-                {geocoding && <p className="text-xs text-emerald-400 mt-2">Pinpointing...</p>}
+
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={fillFromGps}
+                    disabled={locating}
+                    className="flex-1 h-9 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.08] hover:bg-emerald-500/[0.14] text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+                  >
+                    <HiLocationMarker className="text-sm" />
+                    {locating ? "Locating..." : "Use my location"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={togglePicker}
+                    className="flex-1 h-9 rounded-lg border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.07] text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+                  >
+                    <HiMap className="text-sm" />
+                    {showPicker ? "Hide map" : "Pick on map"}
+                  </button>
+                </div>
+
+                {suggestions.length > 1 && (
+                  <div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-white/[0.08] bg-white/[0.02] divide-y divide-white/[0.05]">
+                    {suggestions.map((s, i) => (
+                      <button
+                        key={`${s.lat}-${s.lng}-${i}`}
+                        type="button"
+                        onClick={() => {
+                          const p = { lat: s.lat, lng: s.lng };
+                          setTaskLocation(p);
+                          setMapFocus({ ...p, k: Date.now() });
+                        }}
+                        className="w-full text-left px-3 py-2 text-[11px] text-slate-300 hover:bg-white/[0.05] transition"
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {showPicker && (
+                  <div className="mt-3">
+                    <div className="w-full h-56 rounded-2xl overflow-hidden border border-white/[0.08] relative z-0">
+                      <PinPicker
+                        focus={mapFocus}
+                        fallback={location}
+                        position={taskLocation}
+                        onPick={handlePinPick}
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-2">
+                      Tap the map or drag the pin to your exact house or gate.
+                    </p>
+                  </div>
+                )}
+
                 {taskLocation && !geocoding && (
-                  <p className="text-xs text-emerald-400 mt-2">Location mapped</p>
+                  <p className="text-xs text-emerald-400 mt-2">Pin set. Location mapped.</p>
+                )}
+                {!taskLocation && !geocoding && !showPicker && (
+                  <p className="text-[11px] text-slate-500 mt-2">
+                    Exact address not needed. Search a colony, use your location, or drop a pin.
+                  </p>
                 )}
               </div>
 
@@ -1115,7 +1538,6 @@ export default function Microtask() {
         </div>
       )}
 
-      {/* Completion Modal */}
       {completionTask && (
         <CompletionModal
           task={completionTask}
@@ -1125,7 +1547,6 @@ export default function Microtask() {
         />
       )}
 
-      {/* Dispute Modal */}
       {disputeTask && (
         <DisputeModal
           task={disputeTask}
@@ -1135,195 +1556,181 @@ export default function Microtask() {
         />
       )}
 
-      {/* Map Modal */}
-      {selectedTaskMap && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0d1218] border border-white/[0.08] rounded-3xl w-full max-w-xl shadow-2xl max-h-[92vh] overflow-y-auto">
-            <div className="flex justify-between items-start px-6 pt-6">
-              <div className="min-w-0">
-                <h3 className="text-lg font-bold text-white truncate">{selectedTaskMap.title}</h3>
-                <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
-                  <HiLocationMarker className="shrink-0" />
-                  <span className="truncate">{selectedTaskMap.location?.address}</span>
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  stopNavigation();
-                  setSelectedTaskMap(null);
-                }}
-                className="w-9 h-9 rounded-xl hover:bg-white/[0.06] flex items-center justify-center text-slate-500 hover:text-slate-200 transition shrink-0"
-              >
-                <HiX className="text-lg" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.07] rounded-xl p-1">
-                {[
-                  { k: "home", l: "From home" },
-                  { k: "current", l: "From current location" },
-                ].map((o) => (
-                  <button
-                    key={o.k}
-                    type="button"
-                    onClick={() => {
-                      setRouteSource(o.k);
-                      setRouteSummary(null);
-                      setRouteData(null);
-                      setRouteError(false);
-                      stopNavigation();
-                    }}
-                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
-                      routeSource === o.k
-                        ? "bg-emerald-500/15 text-emerald-300"
-                        : "text-slate-500 hover:text-slate-200"
-                    }`}
-                  >
-                    {o.l}
-                  </button>
-                ))}
-              </div>
-
-              <div className="w-full h-64 rounded-2xl overflow-hidden border border-white/[0.08] relative z-0">
-                <MapContainer
-                  center={[
-                    Number(selectedTaskMap.location?.lat),
-                    Number(selectedTaskMap.location?.lng),
-                  ]}
-                  zoom={14}
-                  style={{ width: "100%", height: "100%" }}
-                >
-                  <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
-                  {(() => {
-                    const routeOrigin = routeSource === "home" ? helperHomeLoc : location;
-                    if (!routeOrigin) return null;
-                    return (
-                      <RoutingMachine
-                        userLoc={routeOrigin}
-                        taskLoc={{
-                          lat: Number(selectedTaskMap.location?.lat),
-                          lng: Number(selectedTaskMap.location?.lng),
-                        }}
-                        onRouteFound={setRouteSummary}
-                        onRouteData={setRouteData}
-                        onRouteError={setRouteError}
-                        retryKey={retryKey}
-                      />
-                    );
-                  })()}
-                  {navigating && liveNavPos && (
-                    <Marker position={[liveNavPos.lat, liveNavPos.lng]}>
-                      <Popup>You are here</Popup>
-                    </Marker>
-                  )}
-                  <FollowUser position={liveNavPos} active={navigating} />
-                </MapContainer>
-              </div>
-
-              {!routeData && !routeError && !navigating && (
-                <div className="flex items-center justify-center gap-2.5 text-xs text-slate-400 bg-white/[0.03] border border-white/[0.07] rounded-xl py-3">
-                  <div className="w-3.5 h-3.5 border-2 border-white/10 border-t-emerald-500 rounded-full animate-spin" />
-                  Finding the best route...
-                </div>
-              )}
-
-              {routeError && !routeData && (
-                <div className="flex items-center justify-between gap-3 bg-red-500/[0.08] border border-red-500/20 rounded-xl p-3.5">
-                  <p className="text-[11px] text-red-300 leading-relaxed">
-                    Route service is busy or timed out. This happens sometimes on the free map server.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRouteError(false);
-                      setRetryKey((k) => k + 1);
-                    }}
-                    className="shrink-0 h-8 px-3 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 text-xs font-semibold transition"
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-
-              {navigating && routeData?.instructions?.[currentStepIdx] && (
-                <div className="flex items-center gap-3.5 bg-emerald-500 rounded-2xl p-4 text-[#04140a]">
-                  {(() => {
-                    const step = routeData.instructions[currentStepIdx];
-                    const stepCoord = routeData.coordinates[step.index];
-                    const { Icon, label } = getManeuverIcon(step);
-                    const metersToTurn = liveNavPos
-                      ? Math.round(distanceMeters(liveNavPos, stepCoord))
-                      : null;
-                    return (
-                      <>
-                        <div className="w-11 h-11 rounded-xl bg-black/15 flex items-center justify-center shrink-0">
-                          <Icon className="text-2xl" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold truncate">{label}</p>
-                          <p className="text-xs opacity-80 truncate mt-0.5">
-                            {metersToTurn != null ? `In ${metersToTurn} m · ` : ""}
-                            {step.text || "Continue along route"}
-                          </p>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              )}
-
-              {routeSummary && !navigating && (
-                <div className="flex items-center justify-center gap-4 text-sm bg-white/[0.03] border border-white/[0.07] rounded-xl py-3">
-                  <span className="text-white font-semibold">{routeSummary.distanceKm} km</span>
-                  <span className="text-slate-700">·</span>
-                  <span className="text-emerald-400 font-semibold">~{routeSummary.timeMin} min</span>
-                </div>
-              )}
-
-              {!navigating ? (
-                <button
-                  type="button"
-                  onClick={startNavigation}
-                  disabled={!routeData}
-                  className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#04140a] text-sm font-bold flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <HiPlay className="text-base" />
-                  Start navigation
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={stopNavigation}
-                  className="w-full h-12 rounded-xl bg-red-500/90 hover:bg-red-500 text-white text-sm font-bold flex items-center justify-center gap-2 transition"
-                >
-                  <HiX className="text-base" />
-                  Stop navigation
-                </button>
-              )}
-
-              {routeSource === "home" && !helperHomeLoc && (
-                <p className="text-[11px] text-amber-400/90 text-center">
-                  Set your home location in Profile for accurate route.
-                </p>
-              )}
-              {routeSource === "current" && !location && (
-                <p className="text-[11px] text-amber-400/90 text-center">
-                  Enable GPS to route from current location.
-                </p>
-              )}
-            </div>
-          </div>
+{selectedTaskMap && (
+  <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="bg-[#0d1218] border border-white/[0.08] rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+      <div className="flex justify-between items-center px-5 py-4 border-b border-white/[0.06]">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-base font-bold text-white truncate">
+            {selectedTaskMap.title}
+          </h3>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            {selectedTaskMap.category} · +{selectedTaskMap.reward || 0} credits
+          </p>
         </div>
-      )}
+        <button
+          onClick={() => {
+            stopNavigation();
+            setSelectedTaskMap(null);
+          }}
+          className="w-9 h-9 rounded-xl hover:bg-white/[0.06] flex items-center justify-center text-slate-500 hover:text-slate-200 transition shrink-0"
+        >
+          <HiX className="text-lg" />
+        </button>
+      </div>
+
+      <div className="p-5 space-y-3">
+        <div className="flex items-center gap-1 bg-white/[0.03] border border-white/[0.07] rounded-xl p-1">
+          {[
+            { k: "home", l: "From home" },
+            { k: "current", l: "From current location" },
+          ].map((o) => (
+            <button
+              key={o.k}
+              type="button"
+              onClick={() => {
+                setRouteSource(o.k);
+                setRouteSummary(null);
+                setRouteData(null);
+                setRouteError(false);
+                stopNavigation();
+              }}
+              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${
+                routeSource === o.k
+                  ? "bg-emerald-500/15 text-emerald-300"
+                  : "text-slate-500 hover:text-slate-200"
+              }`}
+            >
+              {o.l}
+            </button>
+          ))}
+        </div>
+
+        <div className="w-full h-64 rounded-2xl overflow-hidden border border-white/[0.08] relative z-0">
+          <MapContainer
+            center={[
+              Number(selectedTaskMap.location?.lat),
+              Number(selectedTaskMap.location?.lng),
+            ]}
+            zoom={13}
+            style={{ width: "100%", height: "100%" }}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            {(() => {
+              const routeOrigin = routeSource === "home" ? helperHomeLoc : location;
+              if (!routeOrigin) return null;
+              return (
+                <RoutingMachine
+                  userLoc={routeOrigin}
+                  taskLoc={{
+                    lat: Number(selectedTaskMap.location?.lat),
+                    lng: Number(selectedTaskMap.location?.lng),
+                  }}
+                  onRouteFound={setRouteSummary}
+                  onRouteData={setRouteData}
+                  onRouteError={setRouteError}
+                  retryKey={retryKey}
+                />
+              );
+            })()}
+            {navigating && liveNavPos && (
+              <Marker position={[liveNavPos.lat, liveNavPos.lng]}>
+                <Popup>You are here</Popup>
+              </Marker>
+            )}
+            <FollowUser position={liveNavPos} active={navigating} />
+          </MapContainer>
+        </div>
+
+        {navigating && routeData?.instructions?.[currentStepIdx] ? (
+          <div className="flex items-center gap-3 bg-emerald-500 rounded-2xl p-3.5 text-[#04140a]">
+            {(() => {
+              const step = routeData.instructions[currentStepIdx];
+              const stepCoord = routeData.coordinates[step.index];
+              const { Icon, label } = getManeuverIcon(step);
+              const metersToTurn = liveNavPos
+                ? Math.round(distanceMeters(liveNavPos, stepCoord))
+                : null;
+              return (
+                <>
+                  <div className="w-10 h-10 rounded-xl bg-black/15 flex items-center justify-center shrink-0">
+                    <Icon className="text-xl" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold truncate">{label}</p>
+                    <p className="text-[11px] opacity-80 truncate mt-0.5">
+                      {metersToTurn != null ? `In ${metersToTurn} m · ` : ""}
+                      {step.text || "Continue"}
+                    </p>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        ) : routeSummary ? (
+          <div className="flex items-center justify-center gap-3 text-sm bg-white/[0.03] border border-white/[0.07] rounded-xl py-3">
+            <span className="text-white font-semibold">{routeSummary.distanceKm} km</span>
+            <span className="text-slate-600">·</span>
+            <span className="text-emerald-400 font-semibold">~{routeSummary.timeMin} min</span>
+          </div>
+        ) : routeError ? (
+          <div className="flex items-center justify-between gap-3 bg-red-500/[0.08] border border-red-500/20 rounded-xl px-3.5 py-2.5">
+            <p className="text-[11px] text-red-300">Route service busy hai.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setRouteError(false);
+                setRetryKey((k) => k + 1);
+              }}
+              className="shrink-0 h-7 px-3 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 text-[11px] font-semibold transition"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-2.5 text-xs text-slate-400 bg-white/[0.03] border border-white/[0.07] rounded-xl py-3">
+            <div className="w-3.5 h-3.5 border-2 border-white/10 border-t-emerald-500 rounded-full animate-spin" />
+            Finding route...
+          </div>
+        )}
+
+        {!navigating ? (
+          <button
+            type="button"
+            onClick={startNavigation}
+            disabled={!routeData}
+            className="w-full h-11 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#04140a] text-sm font-bold flex items-center justify-center gap-2 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <HiPlay className="text-base" />
+            Start navigation
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={stopNavigation}
+            className="w-full h-11 rounded-xl bg-red-500/90 hover:bg-red-500 text-white text-sm font-bold flex items-center justify-center gap-2 transition"
+          >
+            <HiX className="text-base" />
+            Stop navigation
+          </button>
+        )}
+
+        {routeSource === "home" && !helperHomeLoc && (
+          <p className="text-[10px] text-amber-400/90 text-center leading-relaxed">
+            Home address set nahi hai. Profile mein set karo ya "From current location" use karo.
+          </p>
+        )}
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }
 
-/* ─────────── TASK CARD ─────────── */
 function TaskCard({ task, own, accepted, distance, onAccept, onDelete, onMap, onMarkDone, onDispute, onConfirm }) {
   const status = task.status;
   const reward = task.reward || 0;

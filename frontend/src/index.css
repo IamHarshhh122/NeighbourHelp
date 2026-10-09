@@ -42,3 +42,9 @@
   .float-house-4 {
     animation: floatBobbing 7.4s ease-in-out infinite 2s;
   }
+  .leaflet-routing-container,
+.leaflet-routing-alt,
+.leaflet-routing-geocoders,
+.leaflet-routing-error {
+  display: none !important;
+}
