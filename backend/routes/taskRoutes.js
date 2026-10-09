@@ -4,29 +4,35 @@ const router = express.Router();
 const Task = require("../model/Task");
 const User = require("../model/User");
 
-const toRad = (value) => {
-  return (value * Math.PI) / 180;
-};
+const toRad = (value) => (value * Math.PI) / 180;
 
 const distanceKm = (lat1, lng1, lat2, lng2) => {
   const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
-
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLng / 2) ** 2;
-
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
+const POPULATE_FIELDS =
+  "fullname name email points homeAddress homeLat homeLng tasksPosted tasksDone ratingCount ratingSum";
+
+const RATING_MULTIPLIER = {
+  5: 1.2,
+  4: 1.0,
+  3: 0.6,
+  2: 0.3,
+  1: 0.0,
+};
+
+// GET ALL TASKS
 router.get("/tasks", async (req, res) => {
   try {
     const tasks = await Task.find()
-      .populate("poster", "fullname name email points homeAddress homeLat homeLng")
-      .populate("helper", "fullname name email points homeAddress homeLat homeLng")
+      .populate("poster", POPULATE_FIELDS)
+      .populate("helper", POPULATE_FIELDS)
       .sort({ createdAt: -1 });
 
     return res.json({
@@ -43,6 +49,7 @@ router.get("/tasks", async (req, res) => {
   }
 });
 
+// CREATE TASK
 router.post("/tasks", async (req, res) => {
   try {
     const { title, description, category, location, poster, reward } = req.body;
@@ -72,6 +79,8 @@ router.post("/tasks", async (req, res) => {
       });
     }
 
+    const rewardNum = Number(reward) || 0;
+
     const task = await Task.create({
       title: title.trim(),
       description: description.trim(),
@@ -83,7 +92,8 @@ router.post("/tasks", async (req, res) => {
       },
       poster,
       status: "Open",
-      reward: Number(reward) || 0,
+      reward: rewardNum,
+      originalReward: rewardNum,
       messages: [],
     });
 
@@ -92,8 +102,8 @@ router.post("/tasks", async (req, res) => {
     });
 
     const populatedTask = await Task.findById(task._id)
-      .populate("poster", "fullname name points homeAddress homeLat homeLng")
-      .populate("helper", "fullname name points homeAddress homeLat homeLng");
+      .populate("poster", POPULATE_FIELDS)
+      .populate("helper", POPULATE_FIELDS);
 
     return res.status(201).json({
       success: true,
@@ -108,6 +118,7 @@ router.post("/tasks", async (req, res) => {
   }
 });
 
+// NEARBY TASKS
 router.get("/tasks/nearby", async (req, res) => {
   try {
     const lat = Number(req.query.lat);
@@ -122,10 +133,12 @@ router.get("/tasks/nearby", async (req, res) => {
     }
 
     const tasks = await Task.find({
-      status: { $in: ["Open", "Helping", "In Progress"] },
+      status: {
+        $in: ["Open", "Helping", "In Progress", "Awaiting Approval", "Completed", "Disputed"],
+      },
     })
-      .populate("poster", "fullname name points homeAddress homeLat homeLng")
-      .populate("helper", "fullname name points homeAddress homeLat homeLng")
+      .populate("poster", POPULATE_FIELDS)
+      .populate("helper", POPULATE_FIELDS)
       .sort({ createdAt: -1 });
 
     const nearbyTasks = tasks
@@ -166,6 +179,7 @@ router.get("/tasks/nearby", async (req, res) => {
   }
 });
 
+// ACCEPT TASK
 router.put("/tasks/accept/:id", async (req, res) => {
   try {
     const { helperId } = req.body;
@@ -205,8 +219,8 @@ router.put("/tasks/accept/:id", async (req, res) => {
     await task.save();
 
     const updatedTask = await Task.findById(task._id)
-      .populate("poster", "fullname name points homeAddress homeLat homeLng")
-      .populate("helper", "fullname name points homeAddress homeLat homeLng");
+      .populate("poster", POPULATE_FIELDS)
+      .populate("helper", POPULATE_FIELDS);
 
     return res.json({
       success: true,
@@ -222,7 +236,7 @@ router.put("/tasks/accept/:id", async (req, res) => {
   }
 });
 
-// HELPER: SUBMIT COMPLETION 
+// HELPER: SUBMIT COMPLETION — no points yet
 router.post("/tasks/complete/:id", async (req, res) => {
   try {
     const { helperId, photo, notes, gps } = req.body;
@@ -270,15 +284,16 @@ router.post("/tasks/complete/:id", async (req, res) => {
     task.completionGps = gps || null;
     task.completedAt = new Date();
     task.autoConfirmAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    task.reviewStatus = "pending";
     await task.save();
 
     const updatedTask = await Task.findById(task._id)
-      .populate("poster", "fullname name points homeAddress homeLat homeLng")
-      .populate("helper", "fullname name points homeAddress homeLat homeLng");
+      .populate("poster", POPULATE_FIELDS)
+      .populate("helper", POPULATE_FIELDS);
 
     return res.json({
       success: true,
-      message: "Proof submitted. Waiting for poster confirmation.",
+      message: "Proof submitted. Waiting for poster rating.",
       task: updatedTask,
     });
   } catch (error) {
@@ -290,15 +305,23 @@ router.post("/tasks/complete/:id", async (req, res) => {
   }
 });
 
-//  POSTER: CONFIRM TASK 
+// POSTER: CONFIRM WITH RATING
 router.put("/tasks/confirm/:id", async (req, res) => {
   try {
-    const { posterId } = req.body;
+    const { posterId, rating, feedback } = req.body;
 
     if (!posterId) {
       return res.status(400).json({
         success: false,
         message: "Poster ID is required",
+      });
+    }
+
+    const ratingNum = Number(rating);
+    if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) {
+      return res.status(400).json({
+        success: false,
+        message: "Rating must be between 1 and 5",
       });
     }
 
@@ -325,25 +348,34 @@ router.put("/tasks/confirm/:id", async (req, res) => {
       });
     }
 
-    const reward = task.reward || 0;
+    const baseReward = task.originalReward || task.reward || 0;
+    const multiplier = RATING_MULTIPLIER[ratingNum] ?? 1;
+    const finalReward = Math.round(baseReward * multiplier);
 
-    if (task.helper && reward > 0) {
-      await User.findByIdAndUpdate(task.helper, {
-        $inc: { points: reward, tasksDone: 1 },
-      });
+    if (task.helper) {
+      const inc = { tasksDone: 1 };
+      if (finalReward > 0) inc.points = finalReward;
+      inc.ratingCount = 1;
+      inc.ratingSum = ratingNum;
+
+      await User.findByIdAndUpdate(task.helper, { $inc: inc });
     }
 
+    task.reward = finalReward;
+    task.rating = ratingNum;
+    task.feedback = feedback || "";
+    task.reviewStatus = "rated";
     task.status = "Completed";
     task.confirmedAt = new Date();
     await task.save();
 
     const updatedTask = await Task.findById(task._id)
-      .populate("poster", "fullname name points homeAddress homeLat homeLng")
-      .populate("helper", "fullname name points homeAddress homeLat homeLng");
+      .populate("poster", POPULATE_FIELDS)
+      .populate("helper", POPULATE_FIELDS);
 
     return res.json({
       success: true,
-      message: "Task confirmed. Credits awarded to helper.",
+      message: `Rated ${ratingNum}★ — helper got ${finalReward} credits`,
       task: updatedTask,
     });
   } catch (error) {
@@ -355,7 +387,7 @@ router.put("/tasks/confirm/:id", async (req, res) => {
   }
 });
 
-// ================= POSTER: RAISE DISPUTE =================
+// POSTER: RAISE DISPUTE
 router.post("/tasks/dispute/:id", async (req, res) => {
   try {
     const { posterId, reason, customReason } = req.body;
@@ -396,8 +428,8 @@ router.post("/tasks/dispute/:id", async (req, res) => {
     await task.save();
 
     const updatedTask = await Task.findById(task._id)
-      .populate("poster", "fullname name points homeAddress homeLat homeLng")
-      .populate("helper", "fullname name points homeAddress homeLat homeLng");
+      .populate("poster", POPULATE_FIELDS)
+      .populate("helper", POPULATE_FIELDS);
 
     return res.json({
       success: true,
@@ -413,7 +445,7 @@ router.post("/tasks/dispute/:id", async (req, res) => {
   }
 });
 
-//  DEAL MESSAGE
+// DEAL MESSAGE
 router.post("/tasks/:id/message", async (req, res) => {
   try {
     const { senderId, senderName, text } = req.body;
@@ -470,6 +502,7 @@ router.post("/tasks/:id/message", async (req, res) => {
     });
   }
 });
+
 // DELETE TASK
 router.delete("/tasks/:id", async (req, res) => {
   try {
@@ -517,4 +550,52 @@ router.delete("/tasks/:id", async (req, res) => {
   }
 });
 
+// EXPORTED HELPER: Auto-confirm expired tasks (called from index.js cron)
+const autoConfirmExpiredTasks = async () => {
+  try {
+    const expired = await Task.find({
+      status: "Awaiting Approval",
+      completedAt: {
+        $lt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      },
+    });
+
+    for (const task of expired) {
+      const baseReward = task.originalReward || task.reward || 0;
+
+      if (task.helper && baseReward > 0) {
+        await User.findByIdAndUpdate(task.helper, {
+          $inc: {
+            points: baseReward,
+            tasksDone: 1,
+            ratingCount: 1,
+            ratingSum: 4,
+          },
+        });
+      } else if (task.helper) {
+        await User.findByIdAndUpdate(task.helper, {
+          $inc: { tasksDone: 1, ratingCount: 1, ratingSum: 4 },
+        });
+      }
+
+      task.reward = baseReward;
+      task.rating = 4;
+      task.feedback = "Auto-confirmed after 24 hours";
+      task.reviewStatus = "auto";
+      task.status = "Completed";
+      task.confirmedAt = new Date();
+      await task.save();
+    }
+
+    if (expired.length > 0) {
+      console.log(`[auto-confirm] ${expired.length} tasks auto-confirmed`);
+    }
+    return expired.length;
+  } catch (err) {
+    console.error("Auto-confirm error:", err);
+    return 0;
+  }
+};
+
 module.exports = router;
+module.exports.autoConfirmExpiredTasks = autoConfirmExpiredTasks;

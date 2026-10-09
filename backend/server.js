@@ -6,10 +6,12 @@ const cors = require("cors");
 const session = require("express-session");
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const cron = require("node-cron");
 
 const User = require("./model/User");
 const authRoutes = require("./routes/authRoutes");
 const taskRoutes = require("./routes/taskRoutes");
+const { autoConfirmExpiredTasks } = require("./routes/taskRoutes");
 
 const stripSlash = (url) => (url || "").trim().replace(/\/+$/, "");
 
@@ -184,6 +186,17 @@ mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
     console.log("MongoDB Connected Successfully!");
+
+    // Auto-confirm tasks pending > 24 hr runs every 30 min
+    cron.schedule("*/30 * * * *", async () => {
+      await autoConfirmExpiredTasks();
+    });
+    console.log("Auto-confirm cron scheduled (every 30 min)");
+
+    // Run once at startup too
+    setTimeout(() => {
+      autoConfirmExpiredTasks();
+    }, 5000);
   })
   .catch((error) => {
     console.error("MongoDB Connection Error:", error.message);

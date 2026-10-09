@@ -57,6 +57,10 @@ const taskSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    originalReward: {
+      type: Number,
+      default: 0,
+    },
     completionPhoto: {
       type: String,
       default: null,
@@ -89,6 +93,30 @@ const taskSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    rating: {
+      type: Number,
+      min: 1,
+      max: 5,
+      default: null,
+    },
+    feedback: {
+      type: String,
+      default: "",
+    },
+    reviewStatus: {
+      type: String,
+      enum: ["pending", "rated", "auto"],
+      default: "pending",
+    },
+    messages: [
+      {
+        senderId: String,
+        senderName: String,
+        text: String,
+        timestamp: String,
+        createdAt: Date,
+      },
+    ],
   },
   { timestamps: true }
 );
