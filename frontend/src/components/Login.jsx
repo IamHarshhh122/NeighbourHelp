@@ -32,9 +32,13 @@ const Login = () => {
   const navigate = useNavigate();
 
   // Full-page redirect to backend: GET <BACKEND_URL>/api/google
-  // Backend callback then redirects to <CLIENT_URL>/oauth-success?user=<encoded_json>
+  // redirect_uri batata hai backend ko ki hum kahan se login kar rahe hain
+  // (localhost ya live site) taaki wahi wapas redirect kare
+  // Backend callback phir <that same origin>/oauth-success?user=<encoded_json> pe bhejta hai
   const googleLogin = () => {
-    window.location.href = `${BACKEND_URL}/api/google`;
+    window.location.href = `${BACKEND_URL}/api/google?redirect_uri=${encodeURIComponent(
+      window.location.origin
+    )}`;
   };
 
   const handlePasswordLogin = async (e) => {
@@ -60,7 +64,10 @@ const Login = () => {
       if (res.data.success) {
         toast.success("Welcome back, neighbour! 👋🏠");
         localStorage.setItem("Users", JSON.stringify(res.data.user));
-        navigate("/");
+        setTimeout(() => {
+          navigate("/");
+          window.location.reload();
+        }, 600);
       } else {
         toast.error(res.data.message || "Login failed!");
       }
@@ -120,7 +127,10 @@ const Login = () => {
       if (res.data.success) {
         toast.success("Welcome back, neighbour! 👋🏠");
         localStorage.setItem("Users", JSON.stringify(res.data.user));
-        navigate("/");
+        setTimeout(() => {
+          navigate("/");
+          window.location.reload();
+        }, 600);
       } else {
         toast.error(res.data.message || "Verification failed!");
       }

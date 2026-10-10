@@ -120,9 +120,13 @@ const Signup = () => {
   };
 
   // Full-page redirect to backend: GET <BACKEND_URL>/api/google
-  // Backend callback then redirects to <CLIENT_URL>/oauth-success?user=<encoded_json>
+  // redirect_uri batata hai backend ko ki hum kahan se login kar rahe hain
+  // (localhost ya live site) taaki wahi wapas redirect kare
+  // Backend callback phir <that same origin>/oauth-success?user=<encoded_json> pe bhejta hai
   const googleLogin = () => {
-    window.location.href = `${BACKEND_URL}/api/google`;
+    window.location.href = `${BACKEND_URL}/api/google?redirect_uri=${encodeURIComponent(
+      window.location.origin
+    )}`;
   };
 
   return (
