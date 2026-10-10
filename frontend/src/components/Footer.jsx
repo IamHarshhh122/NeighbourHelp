@@ -43,7 +43,7 @@ const Footers = () => {
   ];
 
   return (
-    <footer className="relative overflow-hidden bg-[#020617] border-t border-white/10 text-slate-400">
+    <footer data-tour="footer" className="relative overflow-hidden bg-[#020617] border-t border-white/10 text-slate-400">
       {/* Glow blobs */}
       <div className="pointer-events-none absolute -top-24 -left-24 w-72 h-72 rounded-full bg-blue-600/15 blur-[100px]" />
       <div className="pointer-events-none absolute -bottom-24 -right-24 w-72 h-72 rounded-full bg-cyan-500/10 blur-[100px]" />
@@ -81,8 +81,8 @@ const Footers = () => {
             </p>
 
             {/* Socials */}
-            <div className="flex items-center gap-2.5 mt-6">
-              {socials.map((s, i) => (
+            <div data-tour="footer-socials" className="flex items-center gap-2.5 mt-6 w-fit">
+               {socials.map((s, i) => (
                 <motion.a
                   key={i}
                   href={s.href}
@@ -108,7 +108,7 @@ const Footers = () => {
 
           {/* LINK COLUMNS */}
           {columns.map((col, idx) => (
-            <div key={idx}>
+            <div key={idx} data-tour={idx === 0 ? "footer-links" : undefined}>
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 mb-4 flex items-center gap-2">
                 <span className="w-4 h-[2px] bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full" />
                 {col.title}

@@ -98,10 +98,11 @@ export default function Navbar() {
 
   const getInitials = (name) => (name ? name.charAt(0).toUpperCase() : "U");
 
+  // `tour` = data-tour value used by the welcome tour
   const navLinks = [
     { to: "/", label: "Home" },
-    { to: "/micro-tasks", label: "Micro-Tasks" },
-    { to: "/about", label: "About" },
+    { to: "/micro-tasks", label: "Micro-Tasks", tour: "micro-tasks" },
+    { to: "/about", label: "About", tour: "about" },
   ];
 
   const desktopLinkStyle = ({ isActive }) =>
@@ -113,7 +114,6 @@ export default function Navbar() {
 
   return (
     <>
-      
       <header
         className={`sticky top-0 z-50 w-full transition-[background-color,box-shadow,border-color] duration-300 ${
           scrolled
@@ -150,7 +150,12 @@ export default function Navbar() {
           {/* DESKTOP NAV PILL */}
           <nav className="hidden md:flex items-center gap-1 px-2 py-1 rounded-full border border-white/10 bg-white/[0.03] backdrop-blur-md shadow-inner shadow-black/40">
             {navLinks.map((link) => (
-              <NavLink key={link.to} to={link.to} className={desktopLinkStyle}>
+              <NavLink
+                key={link.to}
+                to={link.to}
+                className={desktopLinkStyle}
+                data-tour={link.tour}
+              >
                 {link.label}
               </NavLink>
             ))}
@@ -174,6 +179,7 @@ export default function Navbar() {
                 {/* Profile pill */}
                 <Link
                   to="/profile"
+                  data-tour="profile"
                   className="flex items-center gap-2 pl-1 pr-3 py-1 rounded-full bg-white/5 border border-white/10 hover:border-cyan-400/40 hover:bg-white/10 transition-all duration-300"
                 >
                   <div className="relative">
